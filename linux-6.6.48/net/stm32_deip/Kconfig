@@ -1,0 +1,4 @@
+config STM32_DEIP
+	tristate "DEIP driver for stm32mp2 support"
+    help
+      DEIP driver for stm32mp2 support.

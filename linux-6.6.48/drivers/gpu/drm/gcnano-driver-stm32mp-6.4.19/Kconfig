@@ -1,0 +1,4 @@
+config GPU_GALCORE
+	tristate "GPU_GALCORE support"
+	help
+	  gcnano driver for stm32mp

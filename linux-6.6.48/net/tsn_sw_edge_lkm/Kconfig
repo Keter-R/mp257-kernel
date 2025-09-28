@@ -1,0 +1,4 @@
+config TSN_SW_EDGE_LKM
+	tristate "TSN_SW_EDGE_LKM driver for stm32mp2 support"
+    help
+      tsn switch driver for stm32mp2 support.
