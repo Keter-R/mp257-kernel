@@ -46,9 +46,9 @@
         status = "okay";
 	};
 
-	fan_thermal_logic {
-		compatible = "atk,fan-thermal-logic"; // 定义一个唯一的compatible字符串
-		monitored-zone = "soc-thermal";      // 指定我们想要监控的thermal zone的名字
+	fan_thermal_controller {
+		compatible = "atk,fan-thermal-controller";
+		monitored-zone = "soc-thermal"; /* 指定监控的温度区域, 可改为 "soc-thermal" */
 		status = "okay";
 	};
 };
