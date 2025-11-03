@@ -138,3 +138,10 @@
 &dsi_out {
 	remote-endpoint = <&dsi_panel_in>;
 };
+
+/* BEGIN - SOC Temperature Sensor Addition */
+&dts {
+	st,cal-data = <&bsec 0x6C 0x70>; /* 引用 BSEC 中的校准数据地址 */
+	status = "okay";
+};
+/* END - SOC Temperature Sensor Addition */
