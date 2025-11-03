@@ -151,8 +151,7 @@
 			  <0x0 0x44070200 0x0 0x200>,
 			  <0x0 0x44070400 0x0 0xc00>;
 		reg-names = "common", "ts", "pd", "vm";
-		clocks = <&rcc CK_BUS_DTS>, <&rcc CK_KER_DTS>;
-		clock-names = "bus", "ker";
+		clocks = <&rcc CK_KER_DTS>;
 		resets = <&rcc DTS_R>;
 
 		// --- 这是我们为校准添加的自定义属性 ---
