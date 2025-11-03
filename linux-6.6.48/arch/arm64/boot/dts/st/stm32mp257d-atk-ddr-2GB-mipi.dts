@@ -146,10 +146,10 @@
 		compatible = "st,stm32mp25-dts-study"; // 这是一个全新的、唯一的 compatible 字符串
 
 		// --- 以下是完全复制自 stm32mp251.dtsi 中 dts 节点的硬件资源描述 ---
-		reg = <0x44070000 0x80>,
-			  <0x44070080 0x180>,
-			  <0x44070200 0x200>,
-			  <0x44070400 0xc00>;
+		reg = <0x0 0x44070000 0x0 0x80>,
+			  <0x0 0x44070080 0x0 0x180>,
+			  <0x0 0x44070200 0x0 0x200>,
+			  <0x0 0x44070400 0x0 0xc00>;
 		reg-names = "common", "ts", "pd", "vm";
 		clocks = <&rcc CK_BUS_DTS>, <&rcc CK_KER_DTS>;
 		clock-names = "bus", "ker";
