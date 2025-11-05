@@ -1,7 +1,7 @@
 config ONBOARD_FAN
     tristate "Onboard fan controller driver"
     depends on OF
-    default y
+    default m
     help
       Onboard fan controller driver for STM32MP boards.
       Build as module (m) or built-in (y), or disable (n).
