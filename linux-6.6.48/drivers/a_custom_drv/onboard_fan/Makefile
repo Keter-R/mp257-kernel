@@ -1,0 +1,1 @@
+obj-$(CONFIG_ONBOARD_FAN) += fan_thermal_driver.o

@@ -45,6 +45,13 @@
         default-brightness-level = <255>;
         status = "okay";
 	};
+
+	fan_thermal_controller {
+		compatible = "atk,fan-thermal-controller";
+		monitored-zone = "soc-thermal"; /* 指定监控的温度区域, 可改为 "soc-thermal" */
+		pwms = <&pwm17 0 40000 0>;
+		status = "okay";
+	};
 };
 
 &timers16 {
@@ -138,3 +145,4 @@
 &dsi_out {
 	remote-endpoint = <&dsi_panel_in>;
 };
+

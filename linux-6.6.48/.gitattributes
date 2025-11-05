@@ -3,3 +3,8 @@
 *.dts diff=dts
 *.dts[io] diff=dts
 *.rs diff=rust
+# 强制所有 Kconfig / C / H / DTS 文件使用 LF
+*.c text eol=lf
+*.h text eol=lf
+Kconfig* text eol=lf
+*.dts text eol=lf
