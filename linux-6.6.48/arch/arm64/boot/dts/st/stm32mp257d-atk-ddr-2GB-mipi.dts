@@ -115,6 +115,10 @@
 /* ================================================================= */
 /* == MH Photosensor on ADC3 CONFIGURATION START (USER ADDED)     == */
 /* ================================================================= */
+&adc_3 {
+	status = "okay";
+};
+
 &pinctrl {
 	/* 定义 PF10 用于 ADC3_INP2 */
 	adc3_inp2_pins_a: adc3-inp2-0 {
