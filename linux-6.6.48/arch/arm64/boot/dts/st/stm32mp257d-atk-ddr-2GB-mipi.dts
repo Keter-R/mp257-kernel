@@ -8,7 +8,7 @@
 		atk_mipi_dsi_10x1_800x1280 = 4,
 */
 	dsi_lcd_id {
-        dsi_select_id = <4>;
+        dsi_select_id = <2>;
     };
 	
 	panel_dsi_backlight: panel-dsi-backlight {
@@ -116,23 +116,24 @@
 /* == MH Photosensor on ADC3 CONFIGURATION START (USER ADDED)     == */
 /* ================================================================= */
 &pinctrl {
-	adc3_inp6_pins_a: adc3-inp6-0 {
+	/* 定义 PF10 用于 ADC3_INP2 */
+	adc3_inp2_pins_a: adc3-inp2-0 {
 		pins {
-			pinmux = <STM32_PINMUX('F', 13, ANALOG)>; /* PF13 -> ADC3_INP6 */
+			pinmux = <STM32_PINMUX('F', 10, ANALOG)>; /* PF10 -> ADC3_INP2 */
 		};
 	};
 };
 
 &adc3 {
 	pinctrl-names = "default";
-	pinctrl-0 = <&adc3_inp6_pins_a>;
-	vdda-supply = <&vdda_1v8>; /* 引用已定义的1.8V模拟电源 */
-	vref-supply = <&vddref_1v8>; /* 引用已定义的1.8V参考电压 */
+	pinctrl-0 = <&adc3_inp2_pins_a>; /* 引用 PF10 的 pinctrl 配置 */
+	vdda-supply = <&vdda_1v8>;
+	vref-supply = <&vddref_1v8>;
 	status = "okay";
 
-	/* 定义ADC3控制器下的通道 */
-	adc3_chan6: channel@6 {
-		reg = <6>; /* 使用通道6 */
+	/* 定义 ADC3 控制器下的通道2 */
+	adc3_chan2: channel@2 {
+		reg = <2>; /* 使用通道2 */
 	};
 };
 /* ================================================================= */
