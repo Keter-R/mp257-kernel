@@ -8,7 +8,7 @@
 		atk_mipi_dsi_10x1_800x1280 = 4,
 */
 	dsi_lcd_id {
-        dsi_select_id = <2>;
+        dsi_select_id = <3>;
     };
 	
 	panel_dsi_backlight: panel-dsi-backlight {
