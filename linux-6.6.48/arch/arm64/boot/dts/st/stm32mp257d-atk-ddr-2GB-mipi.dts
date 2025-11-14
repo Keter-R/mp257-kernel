@@ -92,15 +92,14 @@
 	};
 };
 
-&i2c7 {
-	pinctrl-names = "default", "sleep";
-	pinctrl-0 = <&i2c7_pins_a>;
-	pinctrl-1 = <&i2c7_sleep_pins_a>;
+/* ================================================================= */
+/* == BME688 SENSOR CONFIGURATION START (USER ADDED)              == */
+/* ================================================================= */
+&i2c3 {
+	/* The base DTS already enables i2c3 for the RTC. */
+	/* We are just adding the BME688 sensor to the same bus. */
 	status = "okay";
-	/delete-property/dmas;
-	/delete-property/dma-names;
 
-	/* BME688 Environmental Sensor */
 	bme688@77 {
 		compatible = "bosch,bme680";
 		reg = <0x77>; /* Use 0x76 if your sensor's address is 0x76 */
