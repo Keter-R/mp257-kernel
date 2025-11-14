@@ -106,9 +106,16 @@
 //		status = "okay";
 //	};
 //};
-&i2c3 {
-	status = "disabled"; // 1. Disable for Linux
-	st,protreg;          // 2. Assign to Cortex-M (Non-Secure)
+//&i2c3 {
+//	status = "disabled"; // 1. Disable for Linux
+//	st,protreg;          // 2. Assign to Cortex-M (Non-Secure)
+//};
+&i2c4 {
+	bme688@77 {
+		compatible = "bosch,bme688";
+		reg = <0x77>;
+		status = "disabled"; // 只有M核用
+	};
 };
 /* ================================================================= */
 /* == BME688 SENSOR CONFIGURATION END                               == */
