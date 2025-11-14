@@ -95,16 +95,20 @@
 /* ================================================================= */
 /* == BME688 SENSOR CONFIGURATION START (USER ADDED)              == */
 /* ================================================================= */
+//&i2c3 {
+//	/* The base DTS already enables i2c3 for the RTC. */
+//	/* We are just adding the BME688 sensor to the same bus. */
+//	status = "okay";
+//
+//	bme688@77 {
+//		compatible = "bosch,bme680";
+//		reg = <0x77>; /* Use 0x76 if your sensor's address is 0x76 */
+//		status = "okay";
+//	};
+//};
 &i2c3 {
-	/* The base DTS already enables i2c3 for the RTC. */
-	/* We are just adding the BME688 sensor to the same bus. */
-	status = "okay";
-
-	bme688@77 {
-		compatible = "bosch,bme680";
-		reg = <0x77>; /* Use 0x76 if your sensor's address is 0x76 */
-		status = "okay";
-	};
+	status = "disabled"; // 1. Disable for Linux
+	st,protreg;          // 2. Assign to Cortex-M (Non-Secure)
 };
 /* ================================================================= */
 /* == BME688 SENSOR CONFIGURATION END                               == */
