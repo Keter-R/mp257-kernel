@@ -57,7 +57,6 @@
 	reserved-memory {
 		#address-cells = <1>;
 		#size-cells = <1>;
-		ranges;
 		// 为M核与A核共享内存添加保留区域
 		mcu_shared_mem: mcu_shared_mem@10040000 {
 			reg = <0x10040000 0x1000>; // 起始地址 和 大小(4KB)
