@@ -52,6 +52,36 @@
 		pwms = <&pwm17 0 40000 0>;
 		status = "okay";
 	};
+
+	reserved-memory {
+		#address-cells = <2>;
+		#size-cells = <2>;
+		ranges;
+		/*
+		 * Shared memory region for Cortex-M33 and Cortex-A35 communication.
+		 * Base Address: 0x10040000
+		 * Required Size: 692 bytes for bme688_ring_buffer_t
+		 * Allocated Size: 4KB (0x1000) for alignment and future-proofing.
+		 */
+		mcu_bme688_shm: mcu_shm@10040000 {
+			compatible = "shared-dma-pool";
+			reg = <0x0 0x10040000 0x0 0x1000>; /* Base: 0x10040000, Size: 4KB */
+			no-map;
+		};
+	};
+};
+
+&etzpc {
+	st,protreg = <
+			 /*
+			  * DDR Region 1, Offset 0x40 (for address 0x10040000),
+			  * Grant Non-Secure M33 core Read/Write access.
+			  * NOTE: The exact DECPROT parameters (DDR region, offset) must be
+			  * verified against the STM32MP257 reference manual for your specific
+			  * memory map.
+			  */
+			 DECPROT(STM32MP25_ETZPC_DDR_1, 0x40,
+			 DECPROT_M33_NSEC_WR | DECPROT_M33_NSEC_RD)>;
 };
 
 &timers16 {
