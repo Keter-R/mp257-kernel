@@ -69,13 +69,22 @@
 			no-map;
 		};
 	};
+
+	&etzpc {
+		/*
+		 * IMPORTANT: This line REPLACES the entire 'st,protreg' property
+		 * from the included .dtsi files. Ensure this is the intended behavior.
+		 * If other peripherals also need ETZPC configuration, they must be
+		 * added here as well.
+		 */
+		st,protreg = <
+							 DECPROT(STM32MP25_ETZPC_DDR_1, 0x40,
+							 DECPROT_M33_NSEC_WR | DECPROT_M33_NSEC_RD)
+					 >;
+	};
 };
 
-&etzpc {
-	st,protreg = <
-			 DECPROT(STM32MP25_ETZPC_DDR_1, 0x40,
-			 DECPROT_M33_NSEC_WR | DECPROT_M33_NSEC_RD)>;
-};
+
 
 &timers16 {
     status = "okay";
