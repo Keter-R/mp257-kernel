@@ -54,13 +54,14 @@
 		status = "okay";
 	};
 
-	reserved-memory {
-		#address-cells = <1>;
-		#size-cells = <1>;
-		// 为M核与A核共享内存添加保留区域
+	&{/reserved-memory} {
 		mcu_shared_mem: mcu_shared_mem@10040000 {
-			reg = <0x10040000 0x1000>; // 起始地址 和 大小(4KB)
-			no-map; // 告诉内核不要为这块内存创建页表映射
+			/*
+			 * 因为父节点要求 #address-cells = <2> 和 #size-cells = <2>，
+			 * 所以这里的 reg 属性必须使用64位格式（4个32位单元格）。
+			 */
+			reg = <0x0 0x10040000 0x0 0x1000>;
+			no-map;
 		};
 	};
 };
