@@ -1,4 +1,5 @@
 #include "stm32mp257d-atk-ddr-2GB.dts"
+
 / {
 /*
 	dsi_lcd_id select id:
@@ -54,33 +55,14 @@
 	};
 
 	reserved-memory {
-		#address-cells = <2>;
-		#size-cells = <2>;
+		#address-cells = <1>;
+		#size-cells = <1>;
 		ranges;
-		/*
-		 * Shared memory region for Cortex-M33 and Cortex-A35 communication.
-		 * Base Address: 0x10040000
-		 * Required Size: 692 bytes for bme688_ring_buffer_t
-		 * Allocated Size: 4KB (0x1000) for alignment and future-proofing.
-		 */
-		mcu_bme688_shm: mcu_shm@10040000 {
-			compatible = "shared-dma-pool";
-			reg = <0x0 0x10040000 0x0 0x1000>; /* Base: 0x10040000, Size: 4KB */
-			no-map;
+		// 为M核与A核共享内存添加保留区域
+		mcu_shared_mem: mcu_shared_mem@10040000 {
+			reg = <0x10040000 0x1000>; // 起始地址 和 大小(4KB)
+			no-map; // 告诉内核不要为这块内存创建页表映射
 		};
-	};
-
-	&etzpc {
-		/*
-		 * IMPORTANT: This line REPLACES the entire 'st,protreg' property
-		 * from the included .dtsi files. Ensure this is the intended behavior.
-		 * If other peripherals also need ETZPC configuration, they must be
-		 * added here as well.
-		 */
-		st,protreg = <
-							 DECPROT(STM32MP25_ETZPC_DDR_1, 0x40,
-							 DECPROT_M33_NSEC_WR | DECPROT_M33_NSEC_RD)
-					 >;
 	};
 };
 
