@@ -54,18 +54,16 @@
 		status = "okay";
 	};
 
-
 };
 
 
-
 &{/reserved-memory} {
-	mcu_shared_mem: mcu_shared_mem@10040000 {
-		/*
-		 * 因为父节点要求 #address-cells = <2> 和 #size-cells = <2>，
-		 * 所以这里的 reg 属性必须使用64位格式（4个32位单元格）。
-		 */
-		reg = <0x0 0x10040000 0x0 0x1000>;
+	mcu_shared_mem: mcu_shared_mem@fe800000 {
+	/*
+	 * 父节点要求 #address-cells = <2> 和 #size-cells = <2>，
+	 * 所以这里的 reg 属性必须使用64位格式（4个32位单元格）。
+	 */
+	reg = <0x0 0xfe800000 0x0 0x1000>; //
 		no-map;
 	};
 };
