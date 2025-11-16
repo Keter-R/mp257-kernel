@@ -73,13 +73,6 @@
 
 &etzpc {
 	st,protreg = <
-			 /*
-			  * DDR Region 1, Offset 0x40 (for address 0x10040000),
-			  * Grant Non-Secure M33 core Read/Write access.
-			  * NOTE: The exact DECPROT parameters (DDR region, offset) must be
-			  * verified against the STM32MP257 reference manual for your specific
-			  * memory map.
-			  */
 			 DECPROT(STM32MP25_ETZPC_DDR_1, 0x40,
 			 DECPROT_M33_NSEC_WR | DECPROT_M33_NSEC_RD)>;
 };
