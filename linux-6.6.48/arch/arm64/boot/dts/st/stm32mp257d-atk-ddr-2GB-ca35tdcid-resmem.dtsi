@@ -112,7 +112,15 @@
 
 		ipc_shmem_1: ipc-shmem-1@81200000 {
 			compatible = "shared-dma-pool";
-			reg = <0x0 0x81200000 0x0 0xf8000>;
+			reg = <0x0 0x81200000 0x0 0x10000>;
+			no-map;
+		};
+
+		bme688_shmem: bme688-shmem@81210000 {
+			compatible = "shared-dma-pool";
+			/* This must match the address in the M-core linker script.
+			   The size should be >= sizeof(bme688_ring_buffer_t). Let's use 4KB. */
+			reg = <0x0 0x81210000 0x0 0x1000>; /* 4 KB starting at 0x81210000 */
 			no-map;
 		};
 
