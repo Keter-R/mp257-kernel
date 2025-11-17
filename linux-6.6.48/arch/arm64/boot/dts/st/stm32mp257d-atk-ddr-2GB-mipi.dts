@@ -57,17 +57,17 @@
 };
 
 
-&{/reserved-memory} {
-
-	/*
-	 * 父节点要求 #address-cells = <2> 和 #size-cells = <2>，
-	 * 所以这里的 reg 属性必须使用64位格式（4个32位单元格）。
-	 */
-	mcu_shared_mem: mcu_shared_mem@fa7f0000 {
-		reg = <0x0 0xfa7f0000 0x0 0x1000>;
-			no-map;
-	};
-};
+//&{/reserved-memory} {
+//
+//	/*
+//	 * 父节点要求 #address-cells = <2> 和 #size-cells = <2>，
+//	 * 所以这里的 reg 属性必须使用64位格式（4个32位单元格）。
+//	 */
+//	mcu_shared_mem: mcu_shared_mem@fa7f0000 {
+//		reg = <0x0 0xfa7f0000 0x0 0x1000>;
+//			no-map;
+//	};
+//};
 
 &timers16 {
     status = "okay";
