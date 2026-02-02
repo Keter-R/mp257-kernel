@@ -4,21 +4,16 @@
  */
 #include <dt-bindings/pinctrl/stm32-pinfunc.h>
 
-// enable Pz4,9 for M0+ core
-&pinctrl_z { 
-    lpuart1_pins_a: lpuart1-0 { 
-        pins1 { 
-            pinmux = <STM32_PINMUX('Z', 9, AF6)>; /* LPUART1_TX */ 
-            bias-disable; 
-            drive-push-pull; 
-            slew-rate = <0>; 
-        }; 
-        pins2 { 
-            pinmux = <STM32_PINMUX('Z', 4, AF6)>; /* LPUART1_RX */ 
-            bias-pull-up; 
-        }; 
-    }; 
-}; 
+/* PB4 配置为 GPIO 输入，内部下拉：释放为低，按下接3.3V为高 */
+&pinctrl_b {
+    m0_button_pb4: m0-button-pb4 {
+        pins1 {
+            pinmux = <STM32_PINMUX('B', 4, AF0)>; /* GPIO */
+            bias-pull-down;       /* 关键：未按下时下拉为低 */
+            slew-rate = <0>;
+        };
+    };
+};
 
 &pinctrl {
 	eth1_mdio_pins_a: eth1-mdio-0 {
