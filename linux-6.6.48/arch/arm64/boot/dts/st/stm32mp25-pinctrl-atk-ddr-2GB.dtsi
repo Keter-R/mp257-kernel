@@ -8,10 +8,10 @@
 
 &pinctrl {
 
-	/* PB4 配置为 GPIO 输入，内部下拉：释放为低，按下接3.3V为高 */
-	m0_button_pb4: m0-button-pb4 {
+	/* PD8 配置为 GPIO 输入，内部下拉：释放为低，按下接3.3V为高 */
+	m0_button_pd8: m0-button-pd8 {
         pins1 {
-            pinmux = <STM32_PINMUX('B', 4, AF0)>; /* GPIO */
+            pinmux = <STM32_PINMUX('D', 8, AF0)>; /* GPIO */
             bias-pull-down;
             slew-rate = <0>;
         };
