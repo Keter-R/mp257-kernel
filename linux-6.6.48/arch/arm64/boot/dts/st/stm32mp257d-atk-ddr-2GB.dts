@@ -616,7 +616,6 @@
     pinctrl-0 = <&m0_button_pb4>;
 
     m0_button_hog {
-        gpio-hog;
         gpios = <4 GPIO_ACTIVE_HIGH>;   /* PB4 */
         input;
         line-name = "m0_button_pb4";
