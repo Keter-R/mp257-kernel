@@ -20,7 +20,6 @@
 		serial0 = &usart2;
 		serial1 = &usart1;
 		serial2 = &uart7;
-		serial3 = &lpuart1;
 		mmc0 = &sdmmc1;
 		mmc1 = &sdmmc2;
 	};
@@ -485,7 +484,7 @@
 	pinctrl-names = "default", "sleep";
 	pinctrl-0 = <&i2c8_pins_a>;
 	pinctrl-1 = <&i2c8_sleep_pins_a>;
-	status = "disabled";
+	status = "okay";
 	/delete-property/dmas;
 	/delete-property/dma-names;
 };
