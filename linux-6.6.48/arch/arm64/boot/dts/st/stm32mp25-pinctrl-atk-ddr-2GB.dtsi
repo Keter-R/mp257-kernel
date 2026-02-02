@@ -4,18 +4,19 @@
  */
 #include <dt-bindings/pinctrl/stm32-pinfunc.h>
 
-/* PB4 配置为 GPIO 输入，内部下拉：释放为低，按下接3.3V为高 */
+
+
 &pinctrl {
-    m0_button_pb4: m0-button-pb4 {
+
+	/* PB4 配置为 GPIO 输入，内部下拉：释放为低，按下接3.3V为高 */
+	m0_button_pb4: m0-button-pb4 {
         pins1 {
             pinmux = <STM32_PINMUX('B', 4, AF0)>; /* GPIO */
             bias-pull-down;
             slew-rate = <0>;
         };
     };
-};
 
-&pinctrl {
 	eth1_mdio_pins_a: eth1-mdio-0 {
 		pins1 {
 			pinmux = <STM32_PINMUX('F', 0, AF10)>; /* ETH_MDC */
