@@ -5,11 +5,11 @@
 #include <dt-bindings/pinctrl/stm32-pinfunc.h>
 
 /* PB4 配置为 GPIO 输入，内部下拉：释放为低，按下接3.3V为高 */
-&pinctrl_b {
+&pinctrl {
     m0_button_pb4: m0-button-pb4 {
         pins1 {
             pinmux = <STM32_PINMUX('B', 4, AF0)>; /* GPIO */
-            bias-pull-down;       /* 关键：未按下时下拉为低 */
+            bias-pull-down;
             slew-rate = <0>;
         };
     };
