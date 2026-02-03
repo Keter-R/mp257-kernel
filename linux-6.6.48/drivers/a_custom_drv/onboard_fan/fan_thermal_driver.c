@@ -35,6 +35,8 @@ struct fan_thermal_data {
 	struct cdev cdev;
 	dev_t devt;
 	struct class *class;
+    struct device_link *link;
+    bool is_suspended;
 };
 
 
@@ -44,7 +46,8 @@ static void fan_actuator_set_speed(struct fan_thermal_data *data, int speed_perc
 	u64 inverted_duty_cycle;
 	int ret;
 
-	if (!data->pwm) return;
+	// 如果系统正在休眠，严禁操作硬件
+    if (data->is_suspended || !data->pwm) return;
 
 	pwm_get_state(data->pwm, &state);
 	if (state.period == 0) state.period = 40000; // 25kHz fallback
@@ -97,9 +100,14 @@ static int fan_monitor_thread(void *priv)
 	int current_temp, ret;
 	u32 local_polling_ms;
 
+	set_freezable();
 	while (!kthread_should_stop()) {
-		set_freezable();
-        try_to_freeze(); 
+        if (try_to_freeze())
+            continue;
+        if (data->is_suspended) {
+            msleep_interruptible(100);
+            continue;
+        }
 		ret = thermal_zone_get_temp(data->tz, &current_temp);
 		if (ret) {
 			pr_err(DRIVER_NAME ": Failed to read temperature\n");
@@ -216,6 +224,15 @@ static int fan_thermal_probe(struct platform_device *pdev)
 		return -ENODEV;
 	}
 	pm_runtime_enable(data->pwm->chip->dev);
+	// 建立设备链路
+    // DL_FLAG_AUTOREMOVE_CONSUMER: 当本驱动卸载时自动删除链路
+    // DL_FLAG_PM_RUNTIME: 链路同步 Runtime PM 状态
+    data->link = device_link_add(dev, data->pwm->chip->dev, 
+                                DL_FLAG_PM_RUNTIME | DL_FLAG_AUTOREMOVE_CONSUMER);
+    if (!data->link) {
+        dev_err(dev, "Failed to create device link to PWM chip\n");
+        // 视情况决定是否返回错误
+    }
 	ret = pm_runtime_get_sync(data->pwm->chip->dev);
 	if (ret < 0) {
 		dev_err(dev, "pm_runtime_get_sync on pwm device failed: %d\n", ret);
@@ -261,18 +278,24 @@ static int fan_thermal_suspend(struct device *dev)
 {
     struct fan_thermal_data *data = dev_get_drvdata(dev);
 
-    // 1. 强制关闭风扇，释放 PWM 资源
-    fan_actuator_set_speed(data, 0);
+    data->is_suspended = true;
 
-    // 2. 显式禁用 PWM (确保内核 PWM 框架允许休眠)
+    // 1. 停止 PWM 输出
     if (data->pwm) {
         struct pwm_state state;
         pwm_get_state(data->pwm, &state);
+        state.duty_cycle = state.period; // 确保输出为高/低电平
         state.enabled = false;
         pwm_apply_might_sleep(data->pwm, &state);
     }
 
-    dev_info(dev, "Fan controller suspended, PWM disabled\n");
+    // 2. 释放 PWM 控制器的 Runtime PM 引用
+    // 这允许 PWM 控制器进入低功耗状态，从而不阻塞 SoC 进入休眠
+    if (data->pwm && data->pwm->chip && data->pwm->chip->dev) {
+        pm_runtime_put_sync(data->pwm->chip->dev);
+    }
+
+    dev_info(dev, "Fan controller suspended and PM ref released\n");
     return 0;
 }
 
@@ -281,7 +304,14 @@ static int fan_thermal_resume(struct device *dev)
 {
     struct fan_thermal_data *data = dev_get_drvdata(dev);
 
-    // 唤醒监控线程，它会在下一个循环自动恢复风扇转速
+    // 1. 重新获取 PWM 控制器的 Runtime PM 引用
+    if (data->pwm && data->pwm->chip && data->pwm->chip->dev) {
+        pm_runtime_get_sync(data->pwm->chip->dev);
+    }
+
+    data->is_suspended = false;
+
+    // 2. 唤醒线程立即执行一次温度检查
     if (data->monitor_thread) {
         wake_up_process(data->monitor_thread);
     }
@@ -289,6 +319,7 @@ static int fan_thermal_resume(struct device *dev)
     dev_info(dev, "Fan controller resumed\n");
     return 0;
 }
+
 
 /* 定义 PM 操作结构体 */
 static SIMPLE_DEV_PM_OPS(fan_thermal_pm_ops, fan_thermal_suspend, fan_thermal_resume);
