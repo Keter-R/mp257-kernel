@@ -223,8 +223,9 @@ static int fan_thermal_probe(struct platform_device *pdev)
      * 修复 2: 强制检查 device_link_add 的返回值。
      * 这确保了 Fan 驱动一定会在 PWM 驱动之前 Suspend。
      */
-    data->link = device_link_add(dev, data->pwm->chip->dev, 
-                                DL_FLAG_PM_RUNTIME | DL_FLAG_AUTOREMOVE_CONSUMER);
+    data->link = device_link_add(dev, data->pwm_chip_dev,
+        DL_FLAG_STATELESS | DL_FLAG_PM_RUNTIME | DL_FLAG_AUTOREMOVE_CONSUMER);
+
     if (!data->link) {
         dev_err(dev, "Failed to create device link to PWM chip - Suspend order cannot be guaranteed\n");
         // 必须返回错误，否则休眠顺序无法保证，会导致 panic 或 suspend 失败
