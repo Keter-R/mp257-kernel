@@ -38,6 +38,7 @@ struct fan_thermal_data {
     struct class *class;
     struct device_link *link;
     bool is_suspended;
+    struct device *pwm_chip_dev;
     int resume_speed; // 用于保存休眠前的速度
 };
 
@@ -229,7 +230,7 @@ static int fan_thermal_probe(struct platform_device *pdev)
         // 必须返回错误，否则休眠顺序无法保证，会导致 panic 或 suspend 失败
         return -EPROBE_DEFER; 
     }
-
+    data->pwm_chip_dev = data->pwm->chip->dev;
     /* 获取 PWM 芯片的 Runtime PM 引用，确保工作时 PWM 控制器时钟开启 */
     ret = pm_runtime_get_sync(data->pwm->chip->dev);
     if (ret < 0) {
@@ -280,36 +281,36 @@ pm_put_exit: pm_runtime_put_sync(data->pwm->chip->dev);
 static int fan_thermal_suspend(struct device *dev)
 {
     struct fan_thermal_data *data = dev_get_drvdata(dev);
-    
+
     if (!data) return 0;
 
     data->is_suspended = true;
 
-    /* 1. 记录当前状态（可选，如果需要恢复之前的速度） */
-    // 这里简单处理，resume 时设为 0 或根据温度重新计算
-
-    /* 2. 显式 Disable PWM */
+    /* 1. 禁止 PWM 输出 */
     if (data->pwm) {
         struct pwm_state state;
+
         pwm_get_state(data->pwm, &state);
         if (state.enabled) {
             state.enabled = false;
             state.duty_cycle = 0;
             pwm_apply_might_sleep(data->pwm, &state);
         }
+
+        /* 2. 真正放弃 PWM 引用，这样 kernel suspend 不会失败 */
+        pwm_put(data->pwm);
+        data->pwm = NULL;
     }
 
-    /* 
-     * 3. 释放 Runtime PM 引用
-     * 这允许 PWM 控制器在所有 Consumer 释放引用后进入低功耗模式
-     */
-    if (data->pwm && data->pwm->chip && data->pwm->chip->dev) {
-        pm_runtime_put_sync(data->pwm->chip->dev);
+    /* 3. 释放 Runtime PM 引用 */
+    if (data->pwm_chip_dev) {
+        pm_runtime_put_sync(data->pwm_chip_dev);
     }
 
-    dev_info(dev, "Fan controller suspended (PWM disabled)\n");
+    dev_info(dev, "Fan controller suspended: PWM disabled and released\n");
     return 0;
 }
+
 
 static int fan_thermal_resume(struct device *dev)
 {
@@ -318,27 +319,36 @@ static int fan_thermal_resume(struct device *dev)
 
     if (!data) return 0;
 
-    /* 1. 重新获取 Runtime PM 引用 */
-    if (data->pwm && data->pwm->chip && data->pwm->chip->dev) {
-        ret = pm_runtime_get_sync(data->pwm->chip->dev);
+    /* 1. 重新获取 Runtime PM */
+    if (data->pwm_chip_dev) {
+        ret = pm_runtime_get_sync(data->pwm_chip_dev);
         if (ret < 0) {
-            dev_err(dev, "Resume: Failed to get runtime PM sync: %d\n", ret);
-            // 即使失败也继续，尝试恢复功能
+            dev_err(dev, "Resume: pm_runtime_get_sync failed: %d\n", ret);
+        }
+    }
+
+    /* 2. 重新获取 PWM 设备 */
+    if (!data->pwm) {
+        data->pwm = pwm_get(dev, NULL);
+        if (IS_ERR(data->pwm)) {
+            dev_err(dev, "Resume: pwm_get failed\n");
+            data->pwm = NULL;
         }
     }
 
     data->is_suspended = false;
 
-    /* 2. 唤醒监控线程，它会立即读取温度并设置正确的转速 */
-    if (data->monitor_thread)
-        wake_up_process(data->monitor_thread);
-    
-    /* 或者立即重置为安全值 */
+    /* 3. 恢复 speed 或安全关闭 */
     fan_actuator_set_speed(data, 0);
 
-    dev_info(dev, "Fan controller resumed\n");
+    /* 唤醒监控线程 */
+    if (data->monitor_thread)
+        wake_up_process(data->monitor_thread);
+
+    dev_info(dev, "Fan controller resumed: PWM reacquired\n");
     return 0;
 }
+
 
 static SIMPLE_DEV_PM_OPS(fan_thermal_pm_ops, fan_thermal_suspend, fan_thermal_resume);
 
