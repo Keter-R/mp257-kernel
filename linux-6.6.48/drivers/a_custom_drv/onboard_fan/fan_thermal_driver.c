@@ -277,25 +277,39 @@ pm_put_exit: pm_runtime_put_sync(data->pwm->chip->dev); pm_runtime_disable(data-
 static int fan_thermal_suspend(struct device *dev)
 {
     struct fan_thermal_data *data = dev_get_drvdata(dev);
+    struct device *pwmchip_dev = NULL;
+
+    if (!data)
+        return 0;
 
     data->is_suspended = true;
 
-    // 1. 停止 PWM 输出
+    /* 如果有 PWM，先抓取 pwm->chip->dev (用于后续 pm_runtime_put) */
+    if (data->pwm && data->pwm->chip)
+        pwmchip_dev = data->pwm->chip->dev;
+
+    /* 1) 停止 PWM 输出（确保硬件不再驱动风扇） */
     if (data->pwm) {
         struct pwm_state state;
         pwm_get_state(data->pwm, &state);
-        state.duty_cycle = state.period; // 确保输出为高/低电平
         state.enabled = false;
+        /* 可根据需要设置 duty_cycle/state，保证输出为安全电平 */
+        state.duty_cycle = 0;
         pwm_apply_might_sleep(data->pwm, &state);
     }
 
-    // 2. 释放 PWM 控制器的 Runtime PM 引用
-    // 这允许 PWM 控制器进入低功耗状态，从而不阻塞 SoC 进入休眠
-    if (data->pwm && data->pwm->chip && data->pwm->chip->dev) {
-        pm_runtime_put_sync(data->pwm->chip->dev);
+    /* 2) 释放对 PWM 的 consumer 引用，这样供应者就可以被 suspend */
+    if (data->pwm) {
+        /* devm 分配的对于提前释放，使用 devm_pwm_put */
+        devm_pwm_put(dev, data->pwm);
+        data->pwm = NULL;
     }
 
-    dev_info(dev, "Fan controller suspended and PM ref released\n");
+    /* 3) 释放 PWM 控制器的 runtime PM 引用（允许其进入低功耗） */
+    if (pwmchip_dev)
+        pm_runtime_put_sync(pwmchip_dev);
+
+    dev_info(dev, "Fan controller suspended and PWM released\n");
     return 0;
 }
 
@@ -303,22 +317,42 @@ static int fan_thermal_suspend(struct device *dev)
 static int fan_thermal_resume(struct device *dev)
 {
     struct fan_thermal_data *data = dev_get_drvdata(dev);
+    int ret = 0;
 
-    // 1. 重新获取 PWM 控制器的 Runtime PM 引用
-    if (data->pwm && data->pwm->chip && data->pwm->chip->dev) {
-        pm_runtime_get_sync(data->pwm->chip->dev);
+    if (!data)
+        return 0;
+
+    /* 1) 重新申请 PWM（恢复 consumer 申请） */
+    if (!data->pwm) {
+        data->pwm = devm_pwm_get(dev, NULL);
+        if (IS_ERR(data->pwm)) {
+            dev_err(dev, "resume: devm_pwm_get failed: %ld\n", PTR_ERR(data->pwm));
+            data->pwm = NULL;
+            /* 如果没有 PWM，仍可继续运行（取决于策略），此处返回错误或继续可按需求调整 */
+            return -ENODEV;
+        }
     }
+
+    /* 2) 重新获取 PWM 控制器的 Runtime PM 引用 */
+    if (data->pwm && data->pwm->chip && data->pwm->chip->dev)
+        pm_runtime_get_sync(data->pwm->chip->dev);
 
     data->is_suspended = false;
 
-    // 2. 唤醒线程立即执行一次温度检查
-    if (data->monitor_thread) {
+    /* 3) 唤醒线程立即执行一次温度检查 / 恢复速率到安全初始值 */
+    if (data->monitor_thread)
         wake_up_process(data->monitor_thread);
-    }
 
-    dev_info(dev, "Fan controller resumed\n");
-    return 0;
+    /* 4) 把风扇设为安全初始值（比如 0%） */
+    fan_actuator_set_speed(data, 0);
+
+    dev_info(dev, "Fan controller resumed and PWM reacquired\n");
+    return ret;
 }
+
+
+
+
 
 
 /* 定义 PM 操作结构体 */
