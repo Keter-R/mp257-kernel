@@ -11,7 +11,7 @@
 #include <linux/slab.h>
 #include <linux/delay.h>
 #include <linux/pm_runtime.h>
-
+#include <linux/freezer.h>
 #include "fan_controller_ioctl.h"
 
 #define DRIVER_NAME "fan_controller"
@@ -98,6 +98,8 @@ static int fan_monitor_thread(void *priv)
 	u32 local_polling_ms;
 
 	while (!kthread_should_stop()) {
+		set_freezable();
+        try_to_freeze(); 
 		ret = thermal_zone_get_temp(data->tz, &current_temp);
 		if (ret) {
 			pr_err(DRIVER_NAME ": Failed to read temperature\n");
