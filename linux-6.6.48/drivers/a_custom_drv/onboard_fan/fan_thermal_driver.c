@@ -254,6 +254,44 @@ pm_put_exit: pm_runtime_put_sync(data->pwm->chip->dev); pm_runtime_disable(data-
 	return ret;
 }
 
+/* 系统休眠回调 */
+static int fan_thermal_suspend(struct device *dev)
+{
+    struct fan_thermal_data *data = dev_get_drvdata(dev);
+
+    // 1. 强制关闭风扇，释放 PWM 资源
+    fan_actuator_set_speed(data, 0);
+
+    // 2. 显式禁用 PWM (确保内核 PWM 框架允许休眠)
+    if (data->pwm) {
+        struct pwm_state state;
+        pwm_get_state(data->pwm, &state);
+        state.enabled = false;
+        pwm_apply_might_sleep(data->pwm, &state);
+    }
+
+    dev_info(dev, "Fan controller suspended, PWM disabled\n");
+    return 0;
+}
+
+/* 系统唤醒回调 */
+static int fan_thermal_resume(struct device *dev)
+{
+    struct fan_thermal_data *data = dev_get_drvdata(dev);
+
+    // 唤醒监控线程，它会在下一个循环自动恢复风扇转速
+    if (data->monitor_thread) {
+        wake_up_process(data->monitor_thread);
+    }
+
+    dev_info(dev, "Fan controller resumed\n");
+    return 0;
+}
+
+/* 定义 PM 操作结构体 */
+static SIMPLE_DEV_PM_OPS(fan_thermal_pm_ops, fan_thermal_suspend, fan_thermal_resume);
+
+
 static int fan_thermal_remove(struct platform_device *pdev)
 {
 	struct fan_thermal_data *data = platform_get_drvdata(pdev);
@@ -280,7 +318,11 @@ static const struct of_device_id fan_thermal_of_match[] = {
 MODULE_DEVICE_TABLE(of, fan_thermal_of_match);
 
 static struct platform_driver fan_thermal_driver = {
-	.driver = { .name = DRIVER_NAME, .of_match_table = fan_thermal_of_match },
+	.driver = { 
+		.name = DRIVER_NAME, 
+		.of_match_table = fan_thermal_of_match,
+		.pm = &fan_thermal_pm_ops
+	},
 	.probe = fan_thermal_probe, .remove = fan_thermal_remove,
 };
 
