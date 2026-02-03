@@ -18,13 +18,16 @@
 #define CLASS_NAME  "fan_controller_class"
 #define STABILIZATION_CYCLES_REQUIRED 3
 
-
 enum temp_trend { TEMP_TREND_STABLE, TEMP_TREND_RISING, TEMP_TREND_DROPPING };
 
 struct fan_thermal_data {
     struct platform_device *pdev;
     struct thermal_zone_device *tz;
+    
+    /* PWM 动态管理相关 */
     struct pwm_device *pwm;
+    struct mutex pwm_lock; /* 保护 pwm 指针的申请与释放 */
+    
     struct task_struct *monitor_thread;
     struct fan_config config;
     struct mutex config_lock;
@@ -36,61 +39,98 @@ struct fan_thermal_data {
     struct cdev cdev;
     dev_t devt;
     struct class *class;
-    struct device_link *link;
     bool is_suspended;
-    struct device *pwm_chip_dev;
-    int resume_speed; // 用于保存休眠前的速度
 };
 
-/* 辅助函数：应用 PWM 状态 */
+/* 
+ * 核心函数：动态 PWM 控制
+ * 逻辑：
+ * 1. speed > 0: 检查是否持有 PWM，若无则申请(pwm_get)，然后设置占空比。
+ * 2. speed <= 0: 检查是否持有 PWM，若有则 Disable 并释放(pwm_put)，指针置空。
+ */
 static void fan_actuator_apply_speed(struct fan_thermal_data *data, int speed_percent)
 {
     struct pwm_state state;
     u64 inverted_duty_cycle;
     int ret;
 
-    if (!data->pwm) return;
-
-    pwm_get_state(data->pwm, &state);
-    if (state.period == 0) state.period = 40000; // 25kHz fallback
+    /* 加锁防止多线程或休眠回调竞争 PWM 资源 */
+    mutex_lock(&data->pwm_lock);
 
     if (speed_percent <= 0) {
-        state.enabled = false;
-        state.duty_cycle = 0; // 可选，保持清晰
+        /* 停转逻辑：释放资源 */
+        if (data->pwm) {
+            /* 先获取当前状态，优雅关闭 */
+            pwm_get_state(data->pwm, &state);
+            if (state.enabled) {
+                state.enabled = false;
+                state.duty_cycle = 0;
+                pwm_apply_might_sleep(data->pwm, &state);
+            }
+            
+            /* 关键：释放 PWM 引用，允许 STM32 PWM 驱动休眠 */
+            pwm_put(data->pwm);
+            data->pwm = NULL;
+        }
     } else {
+        /* 运转逻辑：按需申请 */
+        if (!data->pwm) {
+            data->pwm = pwm_get(&data->pdev->dev, NULL);
+            if (IS_ERR(data->pwm)) {
+                dev_err(&data->pdev->dev, "Failed to acquire PWM dynamically: %ld\n", PTR_ERR(data->pwm));
+                data->pwm = NULL;
+                mutex_unlock(&data->pwm_lock);
+                return;
+            }
+        }
+
         if (speed_percent > 100) speed_percent = 100;
-        // 反向逻辑
+
+        /* 获取默认周期，如果未设置则给个默认值 (例如 25kHz -> 40000ns) */
+        pwm_get_state(data->pwm, &state);
+        if (state.period == 0) state.period = 40000; 
+
+        /* 计算占空比 (假设是反向逻辑：Duty 越小转速越快？根据实际情况调整) */
+        /* 如果是正向逻辑： duty = period * speed / 100 */
+        /* 这里保留你原代码的反向逻辑： */
         inverted_duty_cycle = state.period - ((state.period * speed_percent) / 100);
         state.duty_cycle = inverted_duty_cycle;
         state.enabled = true;
+
+        ret = pwm_apply_might_sleep(data->pwm, &state);
+        if (ret) {
+            dev_err(&data->pdev->dev, "Failed to apply PWM state: %d\n", ret);
+            /* 如果应用失败，尝试释放资源以防状态不一致 */
+            pwm_put(data->pwm);
+            data->pwm = NULL;
+        }
     }
 
-    ret = pwm_apply_might_sleep(data->pwm, &state);
-    if (ret) {
-        dev_err(&data->pdev->dev, "Failed to apply PWM state: %d\n", ret);
-    }
+    mutex_unlock(&data->pwm_lock);
 }
 
 static void fan_actuator_set_speed(struct fan_thermal_data *data, int speed_percent)
 {
-    // 如果系统正在休眠，严禁操作硬件
+    /* 如果系统已挂起，禁止操作硬件 */
     if (data->is_suspended) return;
     fan_actuator_apply_speed(data, speed_percent);
 }
-
-
 
 static void fan_policy_engine_update(struct fan_thermal_data *data, int current_temp)
 {
     struct fan_config local_config;
     int target_level_idx = -1, i;
+    
     mutex_lock(&data->config_lock);
     memcpy(&local_config, &data->config, sizeof(local_config));
     mutex_unlock(&data->config_lock);
+    
     if (local_config.num_levels == 0) { fan_actuator_set_speed(data, 0); return; }
+    
     for (i = local_config.num_levels - 1; i >= 0; i--) {
         if (current_temp >= local_config.levels[i].temp) { target_level_idx = i; break; }
     }
+    
     if (target_level_idx > data->active_level_idx) {
         data->active_level_idx = target_level_idx;
         data->stabilization_count = 0;
@@ -100,6 +140,7 @@ static void fan_policy_engine_update(struct fan_thermal_data *data, int current_
         if (current_temp < (active_level->temp - active_level->hyst)) {
             if (data->trend == TEMP_TREND_RISING) data->stabilization_count = 0;
             else data->stabilization_count++;
+            
             if (data->stabilization_count >= STABILIZATION_CYCLES_REQUIRED) {
                 data->active_level_idx = target_level_idx;
                 data->stabilization_count = 0;
@@ -118,7 +159,7 @@ static int fan_monitor_thread(void *priv)
 
     set_freezable();
     while (!kthread_should_stop()) {
-        /* 关键：响应系统休眠冻结 */
+        /* 响应系统休眠冻结 */
         if (try_to_freeze())
             continue;
         
@@ -129,7 +170,6 @@ static int fan_monitor_thread(void *priv)
         
         ret = thermal_zone_get_temp(data->tz, &current_temp);
         if (ret) {
-            // 忽略错误，避免刷屏，稍微延时
             msleep_interruptible(data->polling_ms);
             continue;
         }
@@ -149,7 +189,6 @@ static int fan_monitor_thread(void *priv)
     }
     return 0;
 }
-
 
 static long fan_thermal_ioctl(struct file *f, unsigned int cmd, unsigned long arg)
 {
@@ -179,8 +218,16 @@ static long fan_thermal_ioctl(struct file *f, unsigned int cmd, unsigned long ar
     return ret;
 }
 
-static int fan_thermal_open(struct inode *inode, struct file *f) { f->private_data = container_of(inode->i_cdev, struct fan_thermal_data, cdev); return 0; }
-static const struct file_operations fan_fops = { .owner = THIS_MODULE, .open = fan_thermal_open, .unlocked_ioctl = fan_thermal_ioctl };
+static int fan_thermal_open(struct inode *inode, struct file *f) { 
+    f->private_data = container_of(inode->i_cdev, struct fan_thermal_data, cdev); 
+    return 0; 
+}
+
+static const struct file_operations fan_fops = { 
+    .owner = THIS_MODULE, 
+    .open = fan_thermal_open, 
+    .unlocked_ioctl = fan_thermal_ioctl 
+};
 
 static int fan_thermal_probe(struct platform_device *pdev)
 {
@@ -188,6 +235,7 @@ static int fan_thermal_probe(struct platform_device *pdev)
     struct fan_thermal_data *data;
     const char *zone_name;
     int ret;
+    struct pwm_device *temp_pwm;
 
     data = devm_kzalloc(dev, sizeof(*data), GFP_KERNEL);
     if (!data) return -ENOMEM;
@@ -195,10 +243,13 @@ static int fan_thermal_probe(struct platform_device *pdev)
     data->pdev = pdev;
     platform_set_drvdata(pdev, data);
     mutex_init(&data->config_lock);
+    mutex_init(&data->pwm_lock); /* 初始化 PWM 锁 */
 
     data->polling_ms = 2000;
     data->config.num_levels = 1;
-    data->config.levels[0].temp = 120000; data->config.levels[0].hyst = 0; data->config.levels[0].fan_speed = 0;
+    data->config.levels[0].temp = 120000; 
+    data->config.levels[0].hyst = 0; 
+    data->config.levels[0].fan_speed = 0;
 
     ret = of_property_read_string(dev->of_node, "monitored-zone", &zone_name);
     if (ret) { dev_err(dev, "Failed to get 'monitored-zone' property\n"); return ret; }
@@ -206,45 +257,22 @@ static int fan_thermal_probe(struct platform_device *pdev)
     data->tz = thermal_zone_get_zone_by_name(zone_name);
     if (IS_ERR(data->tz)) { dev_err(dev, "Could not get thermal zone '%s'\n", zone_name); return PTR_ERR(data->tz); }
 
-    data->pwm = pwm_get(dev, NULL);
-    if (IS_ERR(data->pwm)) { dev_err(dev, "Could not get PWM device\n"); return PTR_ERR(data->pwm); }
-
-    if (!data->pwm->chip || !data->pwm->chip->dev) {
-        dev_err(dev, "PWM chip or its device is not available\n");
-        return -ENODEV;
-    }
-
     /* 
-     * 修复 1: 移除 pm_runtime_enable(data->pwm->chip->dev);
-     * 消费者不应该控制供应者的 PM 初始化。
+     * 探测阶段：尝试获取一次 PWM 以验证设备树配置是否正确。
+     * 获取后立即释放，不长期持有。
      */
-
-    /* 
-     * 修复 2: 强制检查 device_link_add 的返回值。
-     * 这确保了 Fan 驱动一定会在 PWM 驱动之前 Suspend。
-     */
-    data->link = device_link_add(dev, data->pwm_chip_dev,
-        DL_FLAG_STATELESS | DL_FLAG_PM_RUNTIME | DL_FLAG_AUTOREMOVE_CONSUMER);
-
-    if (!data->link) {
-        dev_err(dev, "Failed to create device link to PWM chip - Suspend order cannot be guaranteed\n");
-        // 必须返回错误，否则休眠顺序无法保证，会导致 panic 或 suspend 失败
-        return -EPROBE_DEFER; 
+    temp_pwm = pwm_get(dev, NULL);
+    if (IS_ERR(temp_pwm)) {
+        dev_err(dev, "Probe check: Could not get PWM device. Check DT.\n");
+        return PTR_ERR(temp_pwm);
     }
-    data->pwm_chip_dev = data->pwm->chip->dev;
-    /* 获取 PWM 芯片的 Runtime PM 引用，确保工作时 PWM 控制器时钟开启 */
-    ret = pm_runtime_get_sync(data->pwm->chip->dev);
-    if (ret < 0) {
-        dev_err(dev, "pm_runtime_get_sync on pwm device failed: %d\n", ret);
-        pm_runtime_put_noidle(data->pwm->chip->dev);
-        return ret;
-    }
+    pwm_put(temp_pwm);
+    data->pwm = NULL; /* 确保初始状态为空 */
 
-    fan_actuator_set_speed(data, 0);
     data->active_level_idx = -1;
 
     ret = alloc_chrdev_region(&data->devt, 0, 1, DRIVER_NAME);
-    if (ret < 0) { dev_err(dev, "Failed to allocate chrdev region\n"); goto pm_put_exit; }
+    if (ret < 0) { dev_err(dev, "Failed to allocate chrdev region\n"); return ret; }
 
     cdev_init(&data->cdev, &fan_fops);
     data->cdev.owner = THIS_MODULE;
@@ -263,22 +291,15 @@ static int fan_thermal_probe(struct platform_device *pdev)
         goto destroy_device;
     }
 
-    dev_info(dev, "Fan controller driver initialized successfully\n");
+    dev_info(dev, "Fan controller initialized (Dynamic PWM mode)\n");
     return 0;
 
 destroy_device: device_destroy(data->class, data->devt); class_destroy(data->class);
 del_cdev: cdev_del(&data->cdev);
 unreg_chrdev: unregister_chrdev_region(data->devt, 1);
-pm_put_exit: pm_runtime_put_sync(data->pwm->chip->dev); 
-    // 移除 pm_runtime_disable
     return ret;
 }
 
-/* 
- * 修复 3: 重写 Suspend/Resume 逻辑
- * 目标：确保 PWM 被 Disable，但不释放 struct pwm_device (pwm_put)。
- * 依赖 device_link 保证顺序。
- */
 static int fan_thermal_suspend(struct device *dev)
 {
     struct fan_thermal_data *data = dev_get_drvdata(dev);
@@ -287,69 +308,41 @@ static int fan_thermal_suspend(struct device *dev)
 
     data->is_suspended = true;
 
-    /* 1. 禁止 PWM 输出 */
-    if (data->pwm) {
-        struct pwm_state state;
+    /* 
+     * 关键步骤：
+     * 设置速度为 0，这将触发 fan_actuator_apply_speed 中的逻辑：
+     * 1. Disable PWM
+     * 2. pwm_put() 释放引用
+     * 
+     * 这样当内核继续执行 Suspend 流程到达 STM32 PWM 驱动时，
+     * 发现没有 Consumer 占用，即可成功休眠。
+     */
+    fan_actuator_apply_speed(data, 0);
 
-        pwm_get_state(data->pwm, &state);
-        if (state.enabled) {
-            state.enabled = false;
-            state.duty_cycle = 0;
-            pwm_apply_might_sleep(data->pwm, &state);
-        }
-
-        /* 2. 真正放弃 PWM 引用，这样 kernel suspend 不会失败 */
-        pwm_put(data->pwm);
-        data->pwm = NULL;
-    }
-
-    /* 3. 释放 Runtime PM 引用 */
-    if (data->pwm_chip_dev) {
-        pm_runtime_put_sync(data->pwm_chip_dev);
-    }
-
-    dev_info(dev, "Fan controller suspended: PWM disabled and released\n");
+    dev_info(dev, "Fan controller suspended: PWM released\n");
     return 0;
 }
-
 
 static int fan_thermal_resume(struct device *dev)
 {
     struct fan_thermal_data *data = dev_get_drvdata(dev);
-    int ret;
 
     if (!data) return 0;
 
-    /* 1. 重新获取 Runtime PM */
-    if (data->pwm_chip_dev) {
-        ret = pm_runtime_get_sync(data->pwm_chip_dev);
-        if (ret < 0) {
-            dev_err(dev, "Resume: pm_runtime_get_sync failed: %d\n", ret);
-        }
-    }
-
-    /* 2. 重新获取 PWM 设备 */
-    if (!data->pwm) {
-        data->pwm = pwm_get(dev, NULL);
-        if (IS_ERR(data->pwm)) {
-            dev_err(dev, "Resume: pwm_get failed\n");
-            data->pwm = NULL;
-        }
-    }
-
+    /* 
+     * 恢复时不需要立即申请 PWM。
+     * 只需要清除标志位，唤醒监控线程。
+     * 线程下一次循环检测到温度需要风扇转动时，
+     * 会自动调用 fan_actuator_apply_speed -> pwm_get。
+     */
     data->is_suspended = false;
 
-    /* 3. 恢复 speed 或安全关闭 */
-    fan_actuator_set_speed(data, 0);
-
-    /* 唤醒监控线程 */
     if (data->monitor_thread)
         wake_up_process(data->monitor_thread);
 
-    dev_info(dev, "Fan controller resumed: PWM reacquired\n");
+    dev_info(dev, "Fan controller resumed\n");
     return 0;
 }
-
 
 static SIMPLE_DEV_PM_OPS(fan_thermal_pm_ops, fan_thermal_suspend, fan_thermal_resume);
 
@@ -359,26 +352,18 @@ static int fan_thermal_remove(struct platform_device *pdev)
     
     if (data->monitor_thread) kthread_stop(data->monitor_thread);
     
-    fan_actuator_set_speed(data, 0);
+    /* 确保退出前释放 PWM */
+    fan_actuator_apply_speed(data, 0);
     
     device_destroy(data->class, data->devt);
     class_destroy(data->class);
     cdev_del(&data->cdev);
     unregister_chrdev_region(data->devt, 1);
 
-    if (data->pwm && data->pwm->chip && data->pwm->chip->dev) {
-        pm_runtime_put_sync(data->pwm->chip->dev);
-        // 移除 pm_runtime_disable
-    }
-    
-    // pwm_put 由 devm 自动处理，不需要手动调用
-    // device_link 由 DL_FLAG_AUTOREMOVE_CONSUMER 自动处理
-
     dev_info(&pdev->dev, "Fan controller driver removed\n");
     return 0;
 }
 
-/* ... (match table 和 driver 定义保持不变) ... */
 static const struct of_device_id fan_thermal_of_match[] = {
     { .compatible = "atk,fan-thermal-controller", },
     { /* sentinel */ }
@@ -398,4 +383,4 @@ module_platform_driver(fan_thermal_driver);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("KARLIS");
-MODULE_DESCRIPTION("Definitive Final Fan Controller");
+MODULE_DESCRIPTION("Definitive Final Fan Controller (Dynamic PWM)");
