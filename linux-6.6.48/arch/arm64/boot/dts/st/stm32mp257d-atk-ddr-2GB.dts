@@ -610,18 +610,6 @@
 	status = "okay";
 };
 
-/* stm32mp257d-atk-ddr-2GB.dts：为 M0+ 预留 PD8 作为按钮 GPIO 输入 */
-&gpiob {
-    pinctrl-names = "default";
-    pinctrl-0 = <&m0_button_pd8>;
-
-    m0_button_hog {
-        gpios = <8 GPIO_ACTIVE_HIGH>;   /* PD8 */
-        input;
-        line-name = "m0_button_pd8";
-    };
-};
-
 &scmi_regu {
 	scmi_vddio1: regulator@0 {
 		regulator-min-microvolt = <1800000>;
