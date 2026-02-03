@@ -301,7 +301,7 @@ static int fan_thermal_suspend(struct device *dev)
     /* 2) 释放对 PWM 的 consumer 引用，这样供应者就可以被 suspend */
     if (data->pwm) {
         /* devm 分配的对于提前释放，使用 pwm_put */
-        pwm_put(dev, data->pwm);
+        pwm_put(data->pwm); 
         data->pwm = NULL;
     }
 
