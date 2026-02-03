@@ -216,7 +216,7 @@ static int fan_thermal_probe(struct platform_device *pdev)
 	data->tz = thermal_zone_get_zone_by_name(zone_name);
 	if (IS_ERR(data->tz)) { dev_err(dev, "Could not get thermal zone '%s'\n", zone_name); return PTR_ERR(data->tz); }
 
-	data->pwm = devm_pwm_get(dev, NULL);
+	data->pwm = pwm_get(dev, NULL);
 	if (IS_ERR(data->pwm)) { dev_err(dev, "Could not get PWM device\n"); return PTR_ERR(data->pwm); }
 
 	if (!data->pwm->chip || !data->pwm->chip->dev) {
@@ -300,8 +300,8 @@ static int fan_thermal_suspend(struct device *dev)
 
     /* 2) 释放对 PWM 的 consumer 引用，这样供应者就可以被 suspend */
     if (data->pwm) {
-        /* devm 分配的对于提前释放，使用 devm_pwm_put */
-        devm_pwm_put(dev, data->pwm);
+        /* devm 分配的对于提前释放，使用 pwm_put */
+        pwm_put(dev, data->pwm);
         data->pwm = NULL;
     }
 
@@ -324,9 +324,9 @@ static int fan_thermal_resume(struct device *dev)
 
     /* 1) 重新申请 PWM（恢复 consumer 申请） */
     if (!data->pwm) {
-        data->pwm = devm_pwm_get(dev, NULL);
+        data->pwm = pwm_get(dev, NULL);
         if (IS_ERR(data->pwm)) {
-            dev_err(dev, "resume: devm_pwm_get failed: %ld\n", PTR_ERR(data->pwm));
+            dev_err(dev, "resume: pwm_get failed: %ld\n", PTR_ERR(data->pwm));
             data->pwm = NULL;
             /* 如果没有 PWM，仍可继续运行（取决于策略），此处返回错误或继续可按需求调整 */
             return -ENODEV;
