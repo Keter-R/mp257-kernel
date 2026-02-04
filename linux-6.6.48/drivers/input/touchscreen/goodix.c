@@ -42,6 +42,7 @@
 #define GOODIX_CONFIG_GT9X_LENGTH	240
 
 #define GOODIX_BUFFER_STATUS_READY	BIT(7)
+#define GOODIX_CMD_GESTURE      0x08
 #define GOODIX_HAVE_KEY			BIT(4)
 #define GOODIX_BUFFER_STATUS_TIMEOUT	20
 
@@ -1048,31 +1049,6 @@ static void goodix_read_config(struct goodix_ts_data *ts)
 		}
 	}
 
-	/* ========================================================== */
-	/* == 强制开启双击唤醒配置 == */
-	/* ========================================================== */
-	dev_info(&ts->client->dev, "Modifying config for Double-Tap Wakeup...\n");
-
-	/* 开启手势总开关 (0x804D -> Index 6, Bit 2) */
-	ts->config[6] |= 0x04;
-
-	/* 开启双击手势 (0x8052 -> Index 11, Bit 0) */
-	ts->config[11] |= 0x01;
-
-	/* 设置手势模式下的 INT 脉冲宽度 (0x8056 -> Index 15) */
-	/* 0xAA 表示较大的宽度，确保 STM32 能够捕获到中断 */
-	ts->config[15] = 0xAA;
-
-	/* 重新计算校验和并写回芯片，使配置立即生效 */
-	ts->chip->calc_config_checksum(ts);
-	error = goodix_send_cfg(ts, ts->config, ts->chip->config_len);
-	if (error) {
-		dev_err(&ts->client->dev, "Failed to update gesture config: %d\n", error);
-	}
-	/* ========================================================== */
-	/* == 结束 == */
-	/* ========================================================== */
-
 	ts->int_trigger_type = ts->config[TRIGGER_LOC] & 0x03;
 	ts->max_touch_num = ts->config[MAX_CONTACTS_LOC] & 0x0f;
 
@@ -1452,8 +1428,7 @@ reset:
 		if (error)
 			return error;
 	}
-	/* 使能设备树中的 wakeup-source 属性 */
-	device_init_wakeup(&client->dev, true);
+
 	return 0;
 }
 
@@ -1474,36 +1449,78 @@ static int goodix_suspend(struct device *dev)
 	if (ts->load_cfg_from_disk)
 		wait_for_completion(&ts->firmware_loading_complete);
 
+	/* --- 修改开始: 处理双击唤醒逻辑 --- */
 	if (device_may_wakeup(dev)) {
-		/* 1. 进入手势模式前，必须先写 Command Check 寄存器 (针对 > 0x07 的指令) */
-		error = goodix_i2c_write_u8(client, GOODIX_REG_COMMAND_CHECK, GOODIX_CMD_GESTURE);
-		if (error) return error;
+		/* 1. 启用配置中的双击功能 (Register 0x8076, Offset 0x2F) */
+		/* 注意：ts->config 存储了当前的配置副本 */
+		ts->config[0x2F] |= 0x20; // Bit 5 置 1 (Enable Double Tap)
 
-		/* 2. 写入手势模式指令 */
-		error = goodix_i2c_write_u8(client, GOODIX_REG_COMMAND, GOODIX_CMD_GESTURE);
+		/* 2. 重新计算校验和 (Checksum) */
+		ts->chip->calc_config_checksum(ts);
+
+		/* 3. 将修改后的配置下发给 GT911 */
+		error = goodix_send_cfg(ts, ts->config, ts->chip->config_len);
+		if (error) {
+			dev_err(dev, "Failed to send config for gesture mode\n");
+			return error;
+		}
+
+		/* 4. 进入手势模式 (Gesture Mode) */
+		/* GT911 要求先写 0x8046 为 0x08 (Anti-ESD)，再写 Command 0x8040 为 0x08 */
+		goodix_i2c_write_u8(ts->client, 0x8046, GOODIX_CMD_GESTURE);
+		error = goodix_i2c_write_u8(ts->client, GOODIX_REG_COMMAND, GOODIX_CMD_GESTURE);
 		if (error) {
 			dev_err(dev, "Failed to enter gesture mode\n");
 			return error;
 		}
 
-		/* 3. 确保 INT 引脚为输入状态，以便接收芯片发出的唤醒脉冲 */
-		goodix_irq_direction_input(ts);
+		/* 5. 启用中断唤醒 */
+		error = enable_irq_wake(client->irq);
+		if (error) {
+			dev_err(dev, "Failed to enable irq wake\n");
+			return error;
+		}
 
-		/* 4. 使能内核层级的中断唤醒 */
-		enable_irq_wake(client->irq);
+		/* 进入手势模式后，直接返回，跳过后续的关屏和释放中断操作 */
 		return 0;
 	}
+	/* --- 修改结束 --- */
 
-	/* 以下是原有的深度休眠逻辑 (不唤醒时执行) */
+	/* We need gpio pins to suspend/resume */
 	if (ts->irq_pin_access_method == IRQ_PIN_ACCESS_NONE) {
 		disable_irq(client->irq);
 		return 0;
 	}
 
+	/* Free IRQ as IRQ pin is used as output in the suspend sequence */
 	goodix_free_irq(ts);
-	goodix_irq_direction_output(ts, 0);
+
+	/* Save reference (calibration) info if necessary */
+	goodix_save_bak_ref(ts);
+
+	/* Output LOW on the INT pin for 5 ms */
+	error = goodix_irq_direction_output(ts, 0);
+	if (error) {
+		goodix_request_irq(ts);
+		return error;
+	}
+
 	usleep_range(5000, 6000);
-	goodix_i2c_write_u8(ts->client, GOODIX_REG_COMMAND, GOODIX_CMD_SCREEN_OFF);
+
+	error = goodix_i2c_write_u8(ts->client, GOODIX_REG_COMMAND,
+				    GOODIX_CMD_SCREEN_OFF);
+	if (error) {
+		dev_err(&ts->client->dev, "Screen off command failed\n");
+		goodix_irq_direction_input(ts);
+		goodix_request_irq(ts);
+		return -EAGAIN;
+	}
+
+	/*
+	 * The datasheet specifies that the interval between sending screen-off
+	 * command and wake-up should be longer than 58 ms. To avoid waking up
+	 * sooner, delay 58ms here.
+	 */
 	msleep(58);
 	return 0;
 }
@@ -1512,42 +1529,63 @@ static int goodix_resume(struct device *dev)
 {
 	struct i2c_client *client = to_i2c_client(dev);
 	struct goodix_ts_data *ts = i2c_get_clientdata(client);
-	u8 gesture_id = 0;
+	u8 config_ver;
 	int error;
 
+	/* --- 修改开始: 关闭中断唤醒 --- */
 	if (device_may_wakeup(dev)) {
 		disable_irq_wake(client->irq);
-
-		/* 1. 读取手势 ID (双击通常为 0xCC) */
-		error = goodix_i2c_read(client, GOODIX_REG_GESTURE_ID, &gesture_id, 1);
-		if (!error && gesture_id == GOODIX_GESTURE_DOUBLE_TAP) {
-			dev_info(dev, "Double tap detected, waking up system...\n");
-		}
-
-		/* 2. 清除手势状态 (向手势寄存器写 0) */
-		goodix_i2c_write_u8(client, GOODIX_REG_GESTURE_ID, 0);
-
-		/* 3. 切换回正常工作模式 (写 0 到 Command 寄存器) */
-		goodix_i2c_write_u8(client, GOODIX_REG_COMMAND, 0);
-
-		return 0;
+		/*
+		 * 注意：后续代码会执行 goodix_reset(ts)，
+		 * 这将强制芯片复位，从而退出手势模式，恢复正常坐标上报。
+		 * 所以这里不需要显式发送退出命令。
+		 */
 	}
+	/* --- 修改结束 --- */
 
-	/* 以下是原有的从深度休眠恢复的逻辑 */
 	if (ts->irq_pin_access_method == IRQ_PIN_ACCESS_NONE) {
 		enable_irq(client->irq);
 		return 0;
 	}
 
+	/*
+	 * Exit sleep mode by outputting HIGH level to INT pin
+	 * for 2ms~5ms.
+	 */
 	error = goodix_irq_direction_output(ts, 1);
+	if (error)
+		return error;
+
 	usleep_range(2000, 5000);
-	goodix_int_sync(ts);
-	error = goodix_reset(ts);
-	if (error) return error;
-	error = goodix_send_cfg(ts, ts->config, ts->chip->config_len);
-	if (error) return error;
+
+	error = goodix_int_sync(ts);
+	if (error)
+		return error;
+
+	error = goodix_i2c_read(ts->client, ts->chip->config_addr,
+				&config_ver, 1);
+	if (error)
+		dev_warn(dev, "Error reading config version: %d, resetting controller\n",
+			 error);
+	else if (config_ver != ts->config[0])
+		dev_info(dev, "Config version mismatch %d != %d, resetting controller\n",
+			 config_ver, ts->config[0]);
+
+	if (error != 0 || config_ver != ts->config[0]) {
+		error = goodix_reset(ts);
+		if (error)
+			return error;
+
+		error = goodix_send_cfg(ts, ts->config, ts->chip->config_len);
+		if (error)
+			return error;
+	}
+
 	error = goodix_request_irq(ts);
-	return error;
+	if (error)
+		return error;
+
+	return 0;
 }
 
 static DEFINE_SIMPLE_DEV_PM_OPS(goodix_pm_ops, goodix_suspend, goodix_resume);

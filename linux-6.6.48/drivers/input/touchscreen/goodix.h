@@ -57,16 +57,6 @@
 #define GOODIX_CONFIG_MAX_LENGTH		240
 #define GOODIX_MAX_KEYS				7
 
-///////////////////////
-
-
-/* 手势模式相关寄存器 */
-#define GOODIX_REG_COMMAND_CHECK    0x8046
-#define GOODIX_CMD_GESTURE          0x08
-#define GOODIX_REG_GESTURE_ID       0x814F
-#define GOODIX_GESTURE_DOUBLE_TAP   0xCC
-
-////////////
 
 enum goodix_irq_pin_access_method {
 	IRQ_PIN_ACCESS_NONE,
