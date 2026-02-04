@@ -158,13 +158,14 @@
 	goodix_ts@14 {
 		compatible = "goodix,gt9271", "goodix,gt911";
 		reg = <0x14>;
-		pinctrl-names = "default";
+		pinctrl-names = "default", "sleep";
 		interrupt-parent = <&gpiob>;
 		interrupts = <2 IRQ_TYPE_EDGE_RISING>;
 		irq-gpios = <&gpiob 2 GPIO_ACTIVE_HIGH>;
 		reset-gpios = <&gpiob 1 GPIO_ACTIVE_HIGH>;
-
-		wakeup-source;
+		pinctrl-0 = <&tp_wakeup_pins>;
+		pinctrl-1 = <&tp_wakeup_sleep_pins>;
+		wakeup-source,wakeup;
 
 		status = "okay";
 	};

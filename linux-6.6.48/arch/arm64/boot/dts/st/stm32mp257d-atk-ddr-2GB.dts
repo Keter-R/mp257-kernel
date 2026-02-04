@@ -74,14 +74,6 @@
 			status = "okay";
 		};
 
-		/* 新增：触摸中断当作唤醒键 */
-		tp-wakeup {
-			label = "tp-wakeup";
-			linux,code = <KEY_WAKEUP>;
-			gpios = <&gpiob 2 GPIO_ACTIVE_HIGH>; /* 若实际是低脉冲则改 ACTIVE_LOW */
-			debounce-interval = <10>;
-			gpio-key,wakeup;
-		};
 	};
 
 	gpio-leds {
