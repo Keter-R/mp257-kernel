@@ -1335,6 +1335,11 @@ static int goodix_ts_probe(struct i2c_client *client)
 
 	ts->client = client;
 	i2c_set_clientdata(client, ts);
+	/* --- 注册唤醒源 --- */
+	if (of_property_read_bool(client->dev.of_node, "wakeup-source")) {
+		device_init_wakeup(&client->dev, true);
+	}
+	/* -------------------------- */
 	init_completion(&ts->firmware_loading_complete);
 	ts->contact_size = GOODIX_CONTACT_SIZE;
 
@@ -1449,40 +1454,35 @@ static int goodix_suspend(struct device *dev)
 	if (ts->load_cfg_from_disk)
 		wait_for_completion(&ts->firmware_loading_complete);
 
-	/* --- 修改开始: 处理双击唤醒逻辑 --- */
+	/* --- 修改开始：双击唤醒逻辑 --- */
 	if (device_may_wakeup(dev)) {
-		/* 1. 启用配置中的双击功能 (Register 0x8076, Offset 0x2F) */
-		/* 注意：ts->config 存储了当前的配置副本 */
-		ts->config[0x2F] |= 0x20; // Bit 5 置 1 (Enable Double Tap)
+		/* 1. 读取当前芯片内的配置 (确保修改的是最新参数) */
+		error = goodix_i2c_read(ts->client, ts->chip->config_addr,
+					ts->config, ts->chip->config_len);
 
-		/* 2. 重新计算校验和 (Checksum) */
-		ts->chip->calc_config_checksum(ts);
+		if (!error) {
+			/* 2. 修改配置字节 */
+			/* 0x8076 寄存器在配置数组中的偏移是 0x2F (0x8076 - 0x8047) */
+			ts->config[0x2F] |= 0x20; // 开启 Bit 5: Double Tap
 
-		/* 3. 将修改后的配置下发给 GT911 */
-		error = goodix_send_cfg(ts, ts->config, ts->chip->config_len);
-		if (error) {
-			dev_err(dev, "Failed to send config for gesture mode\n");
-			return error;
+			/* 0x8056 (手势刷新率) 偏移是 0x0F，确保它不为 0，否则没中断 */
+			if (ts->config[0x0F] == 0)
+				ts->config[0x0F] = 0x20;
+
+			/* 3. 计算校验和并下发配置 */
+			ts->chip->calc_config_checksum(ts);
+			goodix_send_cfg(ts, ts->config, ts->chip->config_len);
 		}
 
-		/* 4. 进入手势模式 (Gesture Mode) */
-		/* GT911 要求先写 0x8046 为 0x08 (Anti-ESD)，再写 Command 0x8040 为 0x08 */
-		goodix_i2c_write_u8(ts->client, 0x8046, GOODIX_CMD_GESTURE);
-		error = goodix_i2c_write_u8(ts->client, GOODIX_REG_COMMAND, GOODIX_CMD_GESTURE);
-		if (error) {
-			dev_err(dev, "Failed to enter gesture mode\n");
-			return error;
-		}
+		/* 4. 发送进入手势模式命令 (GT911 特有序列) */
+		goodix_i2c_write_u8(ts->client, 0x8046, 0x08); // Anti-ESD
+		error = goodix_i2c_write_u8(ts->client, 0x8040, 0x08); // Gesture Mode
 
-		/* 5. 启用中断唤醒 */
-		error = enable_irq_wake(client->irq);
-		if (error) {
-			dev_err(dev, "Failed to enable irq wake\n");
-			return error;
+		if (!error) {
+			enable_irq_wake(client->irq);
+			dev_info(dev, "Goodix entered gesture mode, double-tap enabled\n");
+			return 0; // 成功进入手势模式，直接返回
 		}
-
-		/* 进入手势模式后，直接返回，跳过后续的关屏和释放中断操作 */
-		return 0;
 	}
 	/* --- 修改结束 --- */
 

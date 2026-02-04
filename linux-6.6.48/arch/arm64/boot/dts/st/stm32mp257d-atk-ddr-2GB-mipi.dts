@@ -165,7 +165,7 @@
 		reset-gpios = <&gpiob 1 GPIO_ACTIVE_HIGH>;
 		pinctrl-0 = <&tp_wakeup_pins>;
 		pinctrl-1 = <&tp_wakeup_sleep_pins>;
-		wakeup-source,wakeup;
+		wakeup-source;
 
 		status = "okay";
 	};
