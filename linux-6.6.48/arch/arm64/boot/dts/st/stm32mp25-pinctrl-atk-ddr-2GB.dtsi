@@ -8,17 +8,17 @@
 
 &pinctrl {
 
-	goodix_int_pins_a: goodix-int-0 {
+	tp_wakeup_pins: tp-wakeup-0 {
 		pins {
 			pinmux = <STM32_PINMUX('B', 2, GPIO)>;
-			bias-disable;        /* 或 pull-up，按硬件INT空闲电平选择 */
+			bias-disable;
 		};
 	};
 
-	goodix_int_sleep_pins_a: goodix-int-sleep-0 {
+	tp_wakeup_sleep_pins: tp-wakeup-sleep-0 {
 		pins {
 			pinmux = <STM32_PINMUX('B', 2, GPIO)>;
-			bias-disable;        /* 休眠也保持，避免悬空乱唤醒 */
+			bias-disable;
 		};
 	};
 
