@@ -60,13 +60,11 @@
 ///////////////////////
 
 
-/* 新增：手势模式相关寄存器 */
-#define GOODIX_REG_GESTURE_CHECK    0x8046
-#define GOODIX_CMD_GESTURE_MODE     0x08
-#define GOODIX_REG_GESTURE_OUTPUT   0x814F
-#define GOODIX_GESTURE_DOUBLE_TAP   0xCC  /* 部分固件可能是 0x54 */
-
-
+/* 手势模式相关寄存器 */
+#define GOODIX_REG_COMMAND_CHECK    0x8046
+#define GOODIX_CMD_GESTURE          0x08
+#define GOODIX_REG_GESTURE_ID       0x814F
+#define GOODIX_GESTURE_DOUBLE_TAP   0xCC
 
 ////////////
 
