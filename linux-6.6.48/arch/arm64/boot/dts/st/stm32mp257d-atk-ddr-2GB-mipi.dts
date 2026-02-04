@@ -155,23 +155,16 @@
 /* ================================================================= */
 
 &i2c8 {
-    goodix_ts@14 {
+	goodix_ts@14 {
 		compatible = "goodix,gt9271", "goodix,gt911";
 		reg = <0x14>;
-
+		pinctrl-names = "default";
 		interrupt-parent = <&gpiob>;
 		interrupts = <2 IRQ_TYPE_EDGE_RISING>;
 		irq-gpios = <&gpiob 2 GPIO_ACTIVE_HIGH>;
 		reset-gpios = <&gpiob 1 GPIO_ACTIVE_HIGH>;
 
-		pinctrl-names = "default", "sleep";
-		pinctrl-0 = <&goodix_int_pins_a>;
-		pinctrl-1 = <&goodix_int_sleep_pins_a>;
-
 		wakeup-source;
-
-		vdd-supply = <&vdd_3v3>;
-		iovdd-supply = <&vdd_3v3>;
 
 		status = "okay";
 	};
@@ -240,4 +233,3 @@
 &dsi_out {
 	remote-endpoint = <&dsi_panel_in>;
 };
-
