@@ -87,25 +87,25 @@
 /* ================================================================= */
 /* == BME688 SENSOR CONFIGURATION START (USER ADDED)              == */
 /* ================================================================= */
-&pinctrl {
-	i2c7_pins_a: i2c7-0 {
-		pins {
-			/* Using AF4 for I2C7 on PD14/PD15 */
-			pinmux = <STM32_PINMUX('D', 14, AF4)>, /* PD14 -> I2C7_SDA */
-					 <STM32_PINMUX('D', 15, AF4)>; /* PD15 -> I2C7_SCL */
-			bias-pull-up;
-			drive-open-drain;
-			slew-rate = <0>;
-		};
-	};
-
-	i2c7_sleep_pins_a: i2c7-sleep-0 {
-		pins {
-			pinmux = <STM32_PINMUX('D', 14, ANALOG)>,
-					 <STM32_PINMUX('D', 15, ANALOG)>;
-		};
-	};
-};
+//&pinctrl {
+//	i2c7_pins_a: i2c7-0 {
+//		pins {
+//			/* Using AF4 for I2C7 on PD14/PD15 */
+//			pinmux = <STM32_PINMUX('D', 14, AF4)>, /* PD14 -> I2C7_SDA */
+//					 <STM32_PINMUX('D', 15, AF4)>; /* PD15 -> I2C7_SCL */
+//			bias-pull-up;
+//			drive-open-drain;
+//			slew-rate = <0>;
+//		};
+//	};
+//
+//	i2c7_sleep_pins_a: i2c7-sleep-0 {
+//		pins {
+//			pinmux = <STM32_PINMUX('D', 14, ANALOG)>,
+//					 <STM32_PINMUX('D', 15, ANALOG)>;
+//		};
+//	};
+//};
 
 /* ================================================================= */
 /* == BME688 SENSOR CONFIGURATION START (USER ADDED)              == */
@@ -125,46 +125,46 @@
 //	status = "disabled"; // 1. Disable for Linux
 //	st,protreg;          // 2. Assign to Cortex-M (Non-Secure)
 //};
-&i2c4 {
-	bme688@77 {
-		compatible = "bosch,bme688";
-		reg = <0x77>;
-		status = "disabled"; // 只有M核用
-	};
-};
-/* ================================================================= */
-/* == BME688 SENSOR CONFIGURATION END                               == */
-/* ================================================================= */
-
-
-/* ================================================================= */
-/* == MH Photosensor on ADC3 CONFIGURATION START (USER ADDED)     == */
-/* ================================================================= */
-&adc_3 {
-	status = "okay";
-};
-
-&pinctrl {
-	/* 定义 PF10 用于 ADC3_INP2 */
-	adc3_inp2_pins_a: adc3-inp2-0 {
-		pins {
-			pinmux = <STM32_PINMUX('F', 10, ANALOG)>; /* PF10 -> ADC3_INP2 */
-		};
-	};
-};
-
-&adc3 {
-	pinctrl-names = "default";
-	pinctrl-0 = <&adc3_inp2_pins_a>; /* 引用 PF10 的 pinctrl 配置 */
-	vdda-supply = <&vdda_1v8>;
-	vref-supply = <&vddref_1v8>;
-	status = "okay";
-
-	/* 定义 ADC3 控制器下的通道2 */
-	adc3_chan2: channel@2 {
-		reg = <2>; /* 使用通道2 */
-	};
-};
+//&i2c4 {
+//	bme688@77 {
+//		compatible = "bosch,bme688";
+//		reg = <0x77>;
+//		status = "disabled"; // 只有M核用
+//	};
+//};
+///* ================================================================= */
+///* == BME688 SENSOR CONFIGURATION END                               == */
+///* ================================================================= */
+//
+//
+///* ================================================================= */
+///* == MH Photosensor on ADC3 CONFIGURATION START (USER ADDED)     == */
+///* ================================================================= */
+//&adc_3 {
+//	status = "okay";
+//};
+//
+//&pinctrl {
+//	/* 定义 PF10 用于 ADC3_INP2 */
+//	adc3_inp2_pins_a: adc3-inp2-0 {
+//		pins {
+//			pinmux = <STM32_PINMUX('F', 10, ANALOG)>; /* PF10 -> ADC3_INP2 */
+//		};
+//	};
+//};
+//
+//&adc3 {
+//	pinctrl-names = "default";
+//	pinctrl-0 = <&adc3_inp2_pins_a>; /* 引用 PF10 的 pinctrl 配置 */
+//	vdda-supply = <&vdda_1v8>;
+//	vref-supply = <&vddref_1v8>;
+//	status = "okay";
+//
+//	/* 定义 ADC3 控制器下的通道2 */
+//	adc3_chan2: channel@2 {
+//		reg = <2>; /* 使用通道2 */
+//	};
+//};
 /* ================================================================= */
 /* == MH Photosensor on ADC3 CONFIGURATION END                    == */
 /* ================================================================= */
