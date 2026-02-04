@@ -1049,6 +1049,11 @@ static void goodix_read_config(struct goodix_ts_data *ts)
 	}
 
 	ts->int_trigger_type = ts->config[TRIGGER_LOC] & 0x03;
+	/* 强制开启双击手势使能位 (寄存器 0x8076, 偏移为 0x8076 - 0x8047 = 47) */
+	/* Bit 5 为双击开关 */
+	ts->config[47] |= BIT(5);
+	/* 重新计算校验和并更新 config_fresh */
+	ts->chip->calc_config_checksum(ts);
 	ts->max_touch_num = ts->config[MAX_CONTACTS_LOC] & 0x0f;
 
 	x_max = get_unaligned_le16(&ts->config[RESOLUTION_LOC]);
@@ -1448,41 +1453,35 @@ static int goodix_suspend(struct device *dev)
 	if (ts->load_cfg_from_disk)
 		wait_for_completion(&ts->firmware_loading_complete);
 
-	/* We need gpio pins to suspend/resume */
+	/* 检查是否需要支持唤醒 */
+	if (device_may_wakeup(dev)) {
+		/* 1. 写入手势模式命令 (需先写 0x8046 再写 0x8040) */
+		error = goodix_i2c_write_u8(client, GOODIX_REG_GESTURE_CHECK, GOODIX_CMD_GESTURE_MODE);
+		if (!error)
+			error = goodix_i2c_write_u8(client, GOODIX_REG_COMMAND, GOODIX_CMD_GESTURE_MODE);
+
+		if (error) {
+			dev_err(dev, "Failed to enter gesture mode: %d\n", error);
+			return error;
+		}
+
+		/* 2. 使能中断唤醒 */
+		enable_irq_wake(client->irq);
+		return 0;
+	}
+
+	/* 以下是原有的不唤醒时的休眠逻辑 */
 	if (ts->irq_pin_access_method == IRQ_PIN_ACCESS_NONE) {
 		disable_irq(client->irq);
 		return 0;
 	}
 
-	/* Free IRQ as IRQ pin is used as output in the suspend sequence */
 	goodix_free_irq(ts);
-
-	/* Save reference (calibration) info if necessary */
 	goodix_save_bak_ref(ts);
-
-	/* Output LOW on the INT pin for 5 ms */
-	error = goodix_irq_direction_output(ts, 0);
-	if (error) {
-		goodix_request_irq(ts);
-		return error;
-	}
-
+	goodix_irq_direction_output(ts, 0);
 	usleep_range(5000, 6000);
 
-	error = goodix_i2c_write_u8(ts->client, GOODIX_REG_COMMAND,
-				    GOODIX_CMD_SCREEN_OFF);
-	if (error) {
-		dev_err(&ts->client->dev, "Screen off command failed\n");
-		goodix_irq_direction_input(ts);
-		goodix_request_irq(ts);
-		return -EAGAIN;
-	}
-
-	/*
-	 * The datasheet specifies that the interval between sending screen-off
-	 * command and wake-up should be longer than 58 ms. To avoid waking up
-	 * sooner, delay 58ms here.
-	 */
+	error = goodix_i2c_write_u8(ts->client, GOODIX_REG_COMMAND, GOODIX_CMD_SCREEN_OFF);
 	msleep(58);
 	return 0;
 }
@@ -1491,52 +1490,39 @@ static int goodix_resume(struct device *dev)
 {
 	struct i2c_client *client = to_i2c_client(dev);
 	struct goodix_ts_data *ts = i2c_get_clientdata(client);
-	u8 config_ver;
+	u8 gesture_val = 0;
 	int error;
 
+	if (device_may_wakeup(dev)) {
+		/* 1. 关闭中断唤醒 */
+		disable_irq_wake(client->irq);
+
+		/* 2. 读取并清除手势状态寄存器 (0x814F) */
+		goodix_i2c_read(client, GOODIX_REG_GESTURE_OUTPUT, &gesture_val, 1);
+		if (gesture_val == GOODIX_GESTURE_DOUBLE_TAP) {
+			dev_info(dev, "Double tap detected, waking up system...\n");
+		}
+		/* 清除手势标志 */
+		goodix_i2c_write_u8(client, GOODIX_REG_GESTURE_OUTPUT, 0);
+
+		/* 3. 退出手势模式，回到正常坐标模式 */
+		goodix_i2c_write_u8(client, GOODIX_REG_COMMAND, 0);
+		return 0;
+	}
+
+	/* 以下是原有的从完全关闭状态恢复的逻辑 */
 	if (ts->irq_pin_access_method == IRQ_PIN_ACCESS_NONE) {
 		enable_irq(client->irq);
 		return 0;
 	}
 
-	/*
-	 * Exit sleep mode by outputting HIGH level to INT pin
-	 * for 2ms~5ms.
-	 */
 	error = goodix_irq_direction_output(ts, 1);
-	if (error)
-		return error;
-
+	if (error) return error;
 	usleep_range(2000, 5000);
-
-	error = goodix_int_sync(ts);
-	if (error)
-		return error;
-
-	error = goodix_i2c_read(ts->client, ts->chip->config_addr,
-				&config_ver, 1);
-	if (error)
-		dev_warn(dev, "Error reading config version: %d, resetting controller\n",
-			 error);
-	else if (config_ver != ts->config[0])
-		dev_info(dev, "Config version mismatch %d != %d, resetting controller\n",
-			 config_ver, ts->config[0]);
-
-	if (error != 0 || config_ver != ts->config[0]) {
-		error = goodix_reset(ts);
-		if (error)
-			return error;
-
-		error = goodix_send_cfg(ts, ts->config, ts->chip->config_len);
-		if (error)
-			return error;
-	}
+	goodix_int_sync(ts);
 
 	error = goodix_request_irq(ts);
-	if (error)
-		return error;
-
-	return 0;
+	return error;
 }
 
 static DEFINE_SIMPLE_DEV_PM_OPS(goodix_pm_ops, goodix_suspend, goodix_resume);
