@@ -8,6 +8,37 @@
 
 &pinctrl {
 
+	goodix_int_pins_a: goodix-int-0 {
+		pins {
+			pinmux = <STM32_PINMUX('B', 2, GPIO)>;
+			bias-pull-down;        /* 或 pull-up，按硬件INT空闲电平选择 */
+		};
+	};
+
+	goodix_int_sleep_pins_a: goodix-int-sleep-0 {
+		pins {
+			pinmux = <STM32_PINMUX('B', 2, GPIO)>;
+			bias-pull-down;        /* 休眠也保持，避免悬空乱唤醒 */
+		};
+	};
+
+	goodix_rst_pins_a: goodix-rst-0 {
+		pins {
+			pinmux = <STM32_PINMUX('B', 1, GPIO)>;
+			drive-push-pull;
+			bias-disable;
+		};
+	};
+
+	goodix_rst_sleep_pins_a: goodix-rst-sleep-0 {
+		pins {
+			pinmux = <STM32_PINMUX('B', 1, GPIO)>;
+			/* 休眠时建议保持 reset 为“不复位”的电平，别设 ANALOG */
+			drive-push-pull;
+			bias-disable;
+		};
+	};
+
 
 
 	eth1_mdio_pins_a: eth1-mdio-0 {
