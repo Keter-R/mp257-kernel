@@ -1449,50 +1449,77 @@ static int goodix_suspend(struct device *dev)
 {
 	struct i2c_client *client = to_i2c_client(dev);
 	struct goodix_ts_data *ts = i2c_get_clientdata(client);
-	int error;
+	int error = 0;
 	u8 dummy;
+	int i;
 
 	if (ts->load_cfg_from_disk)
 		wait_for_completion(&ts->firmware_loading_complete);
 
+	/* 允许设备作为唤醒源：进入手势模式并保持 IRQ 作为唤醒 */
 	if (device_may_wakeup(dev)) {
-		/* 1. 修改配置以启用双击 */
-		error = goodix_i2c_read(ts->client, ts->chip->config_addr, ts->config, ts->chip->config_len);
-		if (!error) {
-			ts->config[0x2F] |= 0x20; // 开启双击位
-			ts->chip->calc_config_checksum(ts);
-			goodix_send_cfg(ts, ts->config, ts->chip->config_len);
-		}
+		/*
+		 * 关键：先禁用普通 IRQ，避免进入手势/清状态过程中
+		 * INT 抖动造成大量边沿中断，从而“秒醒”。
+		 */
+		disable_irq(client->irq);
 
-		/* 2. 进入手势模式序列 */
+		/*
+		 * （可选）不要每次 suspend 都改 config，先验证最小手势序列。
+		 * 若你确认必须改，建议只在 probe 或用户开关手势时写一次。
+		 */
+
+		/* 进入手势模式序列（按你的写法） */
 		goodix_i2c_write_u8(ts->client, 0x8046, 0x08);
 		error = goodix_i2c_write_u8(ts->client, 0x8040, 0x08);
+		if (error) {
+			enable_irq(client->irq);
+			return error;
+		}
 
-		if (!error) {
-			/* 关键：等待芯片稳定，防止切换瞬间的电平抖动触发唤醒 */
-			msleep(100);
+		/* 等芯片切换稳定 */
+		msleep(50);
 
-			/* 关键：读取并清除状态寄存器 (0x814E)，确保 INT 回到低电平 */
+		/*
+		 * 关键：多清几次状态寄存器，确保 INT 回到非触发态，
+		 * 避免刚 enable wake 就立刻触发唤醒。
+		 */
+		for (i = 0; i < 3; i++) {
 			goodix_i2c_read(ts->client, GOODIX_READ_COOR_ADDR, &dummy, 1);
 			goodix_i2c_write_u8(ts->client, GOODIX_READ_COOR_ADDR, 0);
-
-			/* 最后才开启唤醒功能 */
-			enable_irq_wake(client->irq);
-			dev_info(dev, "Goodix entered gesture mode, double-tap wakeup armed\n");
-			return 0;
+			usleep_range(2000, 4000);
 		}
+
+		/* 先恢复普通 IRQ，再允许作为 wake source */
+		enable_irq(client->irq);
+
+		error = enable_irq_wake(client->irq);
+		if (error) {
+			/* 失败就退回：不作为唤醒源 */
+			dev_err(dev, "enable_irq_wake failed: %d\n", error);
+			return error;
+		}
+
+		dev_info(dev, "Goodix entered gesture mode, double-tap wakeup armed\n");
+		return 0;
 	}
 
-	/* 非唤醒模式的常规挂起逻辑 */
+	/* -------- 非唤醒模式：走原来的省电挂起逻辑 -------- */
+
 	if (ts->irq_pin_access_method == IRQ_PIN_ACCESS_NONE) {
 		disable_irq(client->irq);
 		return 0;
 	}
+
 	goodix_free_irq(ts);
+
+	/* 这里会把 INT 作为 GPIO 操作，因此必须确保 IRQ 已经 free */
 	goodix_irq_direction_output(ts, 0);
+
 	usleep_range(5000, 6000);
 	goodix_i2c_write_u8(ts->client, GOODIX_REG_COMMAND, GOODIX_CMD_SCREEN_OFF);
 	msleep(58);
+
 	return 0;
 }
 
@@ -1503,49 +1530,52 @@ static int goodix_resume(struct device *dev)
 	u8 config_ver;
 	int error;
 
+	/* 如果之前允许作为唤醒源：先关 wake，再释放 IRQ，避免 -5 */
 	if (device_may_wakeup(dev)) {
-		/* 1. 必须先关闭唤醒源 */
 		disable_irq_wake(client->irq);
 
-		/* 2. 关键：为了防止 -5 错误，我们需要在复位前确保中断被禁用，
-		   这样内核才允许 gpiod_direction_output 操作 */
-		disable_irq(client->irq);
+		/*
+		 * 关键：为了避免 gpiod_direction_output 报 -5，
+		 * 最稳的方式是直接 free_irq，让 GPIO 不再“tied to an IRQ”。
+		 *
+		 * 注意：如果你的 goodix_free_irq() 里会做 disable_irq，
+		 * 或者内部有状态判断，重复调用需要能安全返回。
+		 */
+		goodix_free_irq(ts);
 	}
 
 	if (ts->irq_pin_access_method == IRQ_PIN_ACCESS_NONE) {
+		/* 没有 IRQ 管脚访问能力的情况，按你原逻辑处理 */
 		enable_irq(client->irq);
 		return 0;
 	}
 
-	/* 退出手势模式最稳妥的方法是硬件复位 */
+	/*
+	 * 退出手势模式最稳妥的方法是硬件复位/同步 INT：
+	 * 在这里操作 INT 方向是安全的，因为上面已经 free_irq 了。
+	 */
 	error = goodix_irq_direction_output(ts, 1);
 	if (error) {
 		dev_err(dev, "Resume: Failed to set INT output: %d\n", error);
-		/* 如果还是报错，尝试重新使能中断并退出 */
-		goto exit_resume;
+		goto out_request_irq;
 	}
 
 	usleep_range(2000, 5000);
 
 	error = goodix_int_sync(ts);
 	if (error)
-		goto exit_resume;
+		goto out_request_irq;
 
-	/* 检查配置并恢复 */
+	/* 检查配置并恢复（按你原逻辑） */
 	error = goodix_i2c_read(ts->client, ts->chip->config_addr, &config_ver, 1);
 	if (error != 0 || config_ver != ts->config[0]) {
 		goodix_reset(ts);
 		goodix_send_cfg(ts, ts->config, ts->chip->config_len);
 	}
 
-	exit_resume:
-		/* 重新申请/使能中断 */
+	out_request_irq:
+		/* 重新申请 IRQ（无论是否唤醒模式，都要恢复正常中断处理） */
 		error = goodix_request_irq(ts);
-
-	/* 如果是唤醒模式，上面已经 disable_irq 了，这里要补回来 */
-	if (device_may_wakeup(dev))
-		enable_irq(client->irq);
-
 	return error;
 }
 
