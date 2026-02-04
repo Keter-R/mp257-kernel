@@ -165,8 +165,8 @@
 		reset-gpios = <&gpiob 1 GPIO_ACTIVE_HIGH>;
 
 		pinctrl-names = "default", "sleep";
-		pinctrl-0 = <&goodix_int_pins_a &goodix_rst_pins_a>;
-		pinctrl-1 = <&goodix_int_sleep_pins_a &goodix_rst_sleep_pins_a>;
+		pinctrl-0 = <&goodix_int_pins_a>;
+		pinctrl-1 = <&goodix_int_sleep_pins_a>;
 
 		wakeup-source;
 
