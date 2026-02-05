@@ -60,7 +60,7 @@
 		 * 引用 pwm17，通道号 0，周期 40000ns (25kHz)
 		 * 第三个参数 1 (PWM_POLARITY_INVERTED) 表示反相
 		 */
-		pwms = <&pwm17 0 40000 1>;
+		pwms = <&pwm17 0 40000 0>;
 		cooling-levels = <0 64 128 192 255>;
 		/* 必须属性，用于作为冷却设备被引用 */
 		#cooling-cells = <2>;
