@@ -24,7 +24,6 @@
 #include <linux/acpi.h>
 #include <linux/of.h>
 #include <asm/unaligned.h>
-#include <linux/pm_runtime.h>
 #include "goodix.h"
 
 #define GOODIX_GPIO_INT_NAME		"irq"
@@ -43,7 +42,6 @@
 #define GOODIX_CONFIG_GT9X_LENGTH	240
 
 #define GOODIX_BUFFER_STATUS_READY	BIT(7)
-#define GOODIX_CMD_GESTURE      0x08
 #define GOODIX_HAVE_KEY			BIT(4)
 #define GOODIX_BUFFER_STATUS_TIMEOUT	20
 
@@ -1336,11 +1334,6 @@ static int goodix_ts_probe(struct i2c_client *client)
 
 	ts->client = client;
 	i2c_set_clientdata(client, ts);
-	/* --- 注册唤醒源 --- */
-	if (of_property_read_bool(client->dev.of_node, "wakeup-source")) {
-		device_init_wakeup(&client->dev, true);
-	}
-	/* -------------------------- */
 	init_completion(&ts->firmware_loading_complete);
 	ts->contact_size = GOODIX_CONTACT_SIZE;
 
@@ -1446,106 +1439,51 @@ static void goodix_ts_remove(struct i2c_client *client)
 		wait_for_completion(&ts->firmware_loading_complete);
 }
 
-
-
-
-
-/* 寄存器定义 */
-#define GOODIX_REG_COMMAND        0x8040
-#define GOODIX_CMD_GESTURE        0x08
-#define GOODIX_READ_COOR_ADDR     0x814E
-#define GOODIX_GESTURE_CONFIG     0x8046
-
 static int goodix_suspend(struct device *dev)
 {
 	struct i2c_client *client = to_i2c_client(dev);
 	struct goodix_ts_data *ts = i2c_get_clientdata(client);
-	int error = 0;
-	int i;
-	u8 dummy;
+	int error;
 
 	if (ts->load_cfg_from_disk)
 		wait_for_completion(&ts->firmware_loading_complete);
 
-	if (device_may_wakeup(dev)) {
-		/* 1. 禁用中断，防止配置期间 ISR 干扰 */
-		disable_irq(client->irq);
-
-		/* 2. 配置手势模式 */
-		error = goodix_i2c_write_u8(ts->client, GOODIX_GESTURE_CONFIG, 0x08);
-		if (error) {
-			dev_err(dev, "Failed to write gesture config: %d\n", error);
-			goto out_err;
-		}
-
-		error = goodix_i2c_write_u8(ts->client, GOODIX_REG_COMMAND, GOODIX_CMD_GESTURE);
-		if (error) {
-			dev_err(dev, "Failed to enter gesture mode: %d\n", error);
-			goto out_err;
-		}
-
-		/* 3. 等待芯片内部复位和状态稳定 (300ms) */
-		msleep(300);
-
-		/*
-		 * 4. 清除 GT911 内部状态
-		 * 循环多次以确保 INT 引脚被 GT911 物理释放（拉低）
-		 */
-		for (i = 0; i < 5; i++) {
-			goodix_i2c_read(ts->client, GOODIX_READ_COOR_ADDR, &dummy, 1);
-			goodix_i2c_write_u8(ts->client, GOODIX_READ_COOR_ADDR, 0);
-			usleep_range(5000, 6000);
-		}
-
-		/* 5. 物理电平检查 */
-		if (ts->gpiod_int) {
-			int val = gpiod_get_value_cansleep(ts->gpiod_int);
-			if (val == 1) {
-				dev_warn(dev, "Warning: INT pin is HIGH! Trying to clear again...\n");
-				goodix_i2c_write_u8(ts->client, GOODIX_READ_COOR_ADDR, 0);
-				msleep(20);
-			}
-		}
-
-		/*
-		 * 【关键修复】：清洗挂起的中断 (Flush Pending IRQ)
-		 * 在上述 300ms 等待期间，INT 引脚可能产生过毛刺，导致 STM32 GIC 锁存了中断标志。
-		 * 即使现在引脚是低电平，这个标志也会导致 suspend 后立即唤醒。
-		 *
-		 * 方法：短暂 enable_irq，让 ISR 运行一次（它会读到 0 并返回），
-		 * 从而硬件自动清除 Pending 位。
-		 */
-		enable_irq(client->irq);
-		usleep_range(2000, 5000); /* 给 ISR 一点时间运行 */
-		disable_irq(client->irq); /* 再次禁用，准备休眠 */
-
-		/* 6. 启用唤醒源 */
-		error = enable_irq_wake(client->irq);
-		if (error) {
-			dev_err(dev, "enable_irq_wake failed: %d\n", error);
-			goto out_err;
-		}
-
-		dev_info(dev, "Goodix entered gesture mode, wakeup armed (IRQ flushed).\n");
-		return 0;
-
-out_err:
-		enable_irq(client->irq);
-		return error;
-	}
-
-	/* 深度休眠/关机逻辑保持不变 */
+	/* We need gpio pins to suspend/resume */
 	if (ts->irq_pin_access_method == IRQ_PIN_ACCESS_NONE) {
 		disable_irq(client->irq);
 		return 0;
 	}
 
+	/* Free IRQ as IRQ pin is used as output in the suspend sequence */
 	goodix_free_irq(ts);
-	goodix_irq_direction_output(ts, 0);
-	usleep_range(5000, 6000);
-	goodix_i2c_write_u8(ts->client, GOODIX_REG_COMMAND, GOODIX_CMD_SCREEN_OFF);
-	msleep(58);
 
+	/* Save reference (calibration) info if necessary */
+	goodix_save_bak_ref(ts);
+
+	/* Output LOW on the INT pin for 5 ms */
+	error = goodix_irq_direction_output(ts, 0);
+	if (error) {
+		goodix_request_irq(ts);
+		return error;
+	}
+
+	usleep_range(5000, 6000);
+
+	error = goodix_i2c_write_u8(ts->client, GOODIX_REG_COMMAND,
+				    GOODIX_CMD_SCREEN_OFF);
+	if (error) {
+		dev_err(&ts->client->dev, "Screen off command failed\n");
+		goodix_irq_direction_input(ts);
+		goodix_request_irq(ts);
+		return -EAGAIN;
+	}
+
+	/*
+	 * The datasheet specifies that the interval between sending screen-off
+	 * command and wake-up should be longer than 58 ms. To avoid waking up
+	 * sooner, delay 58ms here.
+	 */
+	msleep(58);
 	return 0;
 }
 
@@ -1556,52 +1494,50 @@ static int goodix_resume(struct device *dev)
 	u8 config_ver;
 	int error;
 
-	if (device_may_wakeup(dev)) {
-		/* 禁用唤醒 */
-		disable_irq_wake(client->irq);
-
-		/*
-		 * 注意：此时中断处于 disable_irq 状态（由 suspend 遗留）。
-		 * 我们需要释放它以便操作 GPIO。
-		 */
-		goodix_free_irq(ts);
-	}
-
 	if (ts->irq_pin_access_method == IRQ_PIN_ACCESS_NONE) {
 		enable_irq(client->irq);
 		return 0;
 	}
 
-	/* 拉高 INT 唤醒/复位芯片 */
+	/*
+	 * Exit sleep mode by outputting HIGH level to INT pin
+	 * for 2ms~5ms.
+	 */
 	error = goodix_irq_direction_output(ts, 1);
-	if (error) {
-		dev_err(dev, "Resume: Failed to set INT output: %d\n", error);
-		goodix_request_irq(ts);
+	if (error)
 		return error;
-	}
 
 	usleep_range(2000, 5000);
 
-	goodix_int_sync(ts);
+	error = goodix_int_sync(ts);
+	if (error)
+		return error;
 
-	/* 检查配置 */
-	error = goodix_i2c_read(ts->client, ts->chip->config_addr, &config_ver, 1);
+	error = goodix_i2c_read(ts->client, ts->chip->config_addr,
+				&config_ver, 1);
+	if (error)
+		dev_warn(dev, "Error reading config version: %d, resetting controller\n",
+			 error);
+	else if (config_ver != ts->config[0])
+		dev_info(dev, "Config version mismatch %d != %d, resetting controller\n",
+			 config_ver, ts->config[0]);
+
 	if (error != 0 || config_ver != ts->config[0]) {
-		dev_info(dev, "Config mismatch after resume, resetting chip...\n");
-		goodix_reset(ts);
-		goodix_send_cfg(ts, ts->config, ts->chip->config_len);
+		error = goodix_reset(ts);
+		if (error)
+			return error;
+
+		error = goodix_send_cfg(ts, ts->config, ts->chip->config_len);
+		if (error)
+			return error;
 	}
 
-	/* 重新申请中断 (request_irq 内部会自动 enable_irq) */
 	error = goodix_request_irq(ts);
 	if (error)
-		dev_err(dev, "Resume: goodix_request_irq failed: %d\n", error);
+		return error;
 
-	return error;
+	return 0;
 }
-
-
-
 
 static DEFINE_SIMPLE_DEV_PM_OPS(goodix_pm_ops, goodix_suspend, goodix_resume);
 
