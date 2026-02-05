@@ -160,11 +160,11 @@
 		reg = <0x14>;
 		pinctrl-names = "default", "sleep";
 		interrupt-parent = <&gpiob>;
-		interrupts = <2 IRQ_TYPE_EDGE_FALLING>;
-		irq-gpios = <&gpiob 2 GPIO_ACTIVE_LOW>;
+		interrupts = <2 IRQ_TYPE_EDGE_RISING>;
+		irq-gpios = <&gpiob 2 GPIO_ACTIVE_HIGH>;
 		reset-gpios = <&gpiob 1 GPIO_ACTIVE_HIGH>;
-		pinctrl-0 = <&tp_wakeup_pins>;
-		pinctrl-1 = <&tp_wakeup_sleep_pins>;
+		pinctrl-0 = <&tp_wakeup_pins &tp_rst_pins>;
+		pinctrl-1 = <&tp_wakeup_sleep_pins &tp_rst_sleep_pins>;
 		wakeup-source;
 
 		status = "okay";
