@@ -61,7 +61,8 @@
 		 * 第三个参数 1 (PWM_POLARITY_INVERTED) 表示反相
 		 */
 		pwms = <&pwm17 0 40000 0>;
-		cooling-levels = <0 64 128 192 255>;
+//		cooling-levels = <0 64 128 192 255>;
+		cooling-levels = <255 192 128 64 0>;
 		/* 必须属性，用于作为冷却设备被引用 */
 		#cooling-cells = <2>;
 		status = "okay";
