@@ -1446,65 +1446,85 @@ static void goodix_ts_remove(struct i2c_client *client)
 }
 
 
+
+
 #define GT911_GESTURE_REG            0x814B
 #define GT911_ENTER_GESTURE_CMD      0x08
 
-/* DTS: EDGE_RISING + ACTIVE_HIGH => idle 应该是 LOW(0)，事件产生上升沿 */
-static inline bool goodix_int_idle_is_low(void)
+/* 推荐方案A：EDGE_FALLING + ACTIVE_LOW + PULL-UP => idle 应该是 HIGH(1) */
+static inline bool goodix_int_idle_is_high(void)
 {
 	return true;
 }
 
 static void goodix_clear_irq_pending(unsigned int irq)
 {
-	/*
-	 * 清 pending：对“秒醒（pending 锁存）”非常关键
-	 * 某些 irqchip 可能不支持 PENDING state，失败则忽略。
-	 */
 	(void)irq_set_irqchip_state(irq, IRQCHIP_STATE_PENDING, false);
 	(void)irq_set_irqchip_state(irq, IRQCHIP_STATE_ACTIVE, false);
 }
 
-static int goodix_wait_int_idle_low(struct goodix_ts_data *ts,
-				    unsigned int irq,
-				    unsigned int timeout_ms)
+static int goodix_wait_int_idle_high(struct goodix_ts_data *ts,
+				     unsigned int irq,
+				     unsigned int timeout_ms)
 {
 	unsigned int elapsed = 0;
 	int level;
-	u8 dummy;
 
-	if (!goodix_int_idle_is_low())
+	if (!goodix_int_idle_is_high())
 		return 0;
 
 	if (!ts->gpiod_int)
-		return 0; /* 无法读电平就只能靠清 pending */
+		return 0;
 
 	while (elapsed < timeout_ms) {
 		level = gpiod_get_value_cansleep(ts->gpiod_int);
 		if (level < 0)
 			return 0;
 
-		/* idle=0，等到线稳定为低才算安全 */
-		if (level == 0)
+		if (level == 1)
 			return 0;
 
-		/*
-		 * 线还在高：清一次 GT 状态 + 清一次 pending，
-		 * 给线释放/回落的机会（避免 enable_irq_wake 时捕获上升沿）。
-		 */
-		goodix_i2c_read(ts->client, GOODIX_READ_COOR_ADDR, &dummy, 1);
-		goodix_i2c_write_u8(ts->client, GOODIX_READ_COOR_ADDR, 0x00);
-
-		goodix_i2c_read(ts->client, GT911_GESTURE_REG, &dummy, 1);
-		goodix_i2c_write_u8(ts->client, GT911_GESTURE_REG, 0x00);
-
+		/* 线仍为低：清 pending 并等待回到高电平 */
 		goodix_clear_irq_pending(irq);
-
 		msleep(10);
 		elapsed += 10;
 	}
 
 	return -ETIMEDOUT;
+}
+
+static int goodix_i2c_write_u8_retry(struct i2c_client *client, u16 reg, u8 val)
+{
+	int ret, i;
+
+	for (i = 0; i < 5; i++) {
+		ret = goodix_i2c_write_u8(client, reg, val);
+		if (!ret)
+			return 0;
+
+		if (ret == -ENXIO || ret == -EIO || ret == -EREMOTEIO)
+			usleep_range(2000, 5000);
+		else
+			break;
+	}
+	return ret;
+}
+
+static int goodix_i2c_read_retry(struct i2c_client *client, u16 reg, u8 *buf, int len)
+{
+	int ret, i;
+
+	for (i = 0; i < 5; i++) {
+		ret = goodix_i2c_read(client, reg, buf, len);
+		if (!ret)
+			return 0;
+
+		if (ret == -ENXIO || ret == -EIO || ret == -EREMOTEIO)
+			usleep_range(2000, 5000);
+		else
+			break;
+	}
+	return ret;
 }
 
 static int goodix_suspend(struct device *dev)
@@ -1514,64 +1534,76 @@ static int goodix_suspend(struct device *dev)
 	int error = 0;
 	u8 dummy;
 	int i;
+	int pmret;
 
 	if (ts->load_cfg_from_disk)
 		wait_for_completion(&ts->firmware_loading_complete);
 
 	/* ---- Wakeup (gesture) path ---- */
 	if (device_may_wakeup(dev)) {
-		/*
-		 * 先关普通 IRQ：避免进入 gesture/清状态时的抖动导致中断风暴
-		 * 注意：disable_irq 不会影响 enable_irq_wake 的唤醒能力
-		 */
+		/* 保证 I2C/设备处于活跃态，避免 -ENXIO */
+		pmret = pm_runtime_resume_and_get(dev);
+		if (pmret < 0) {
+			dev_warn(dev, "PM: runtime resume failed %d, skip gesture arm\n", pmret);
+			goto non_wakeup_path;
+		}
+
+		/* 关普通 IRQ，避免切模式时中断风暴 */
 		disable_irq(client->irq);
 
-		/* 进入手势模式：0x8046/0x8040 写 0x08 */
-		error = goodix_i2c_write_u8(ts->client, 0x8046, GT911_ENTER_GESTURE_CMD);
+		/* 进入 gesture mode */
+		error = goodix_i2c_write_u8_retry(ts->client, 0x8046, GT911_ENTER_GESTURE_CMD);
 		if (error)
-			goto out_reenable_irq;
+			goto out_gesture_fail;
 
-		error = goodix_i2c_write_u8(ts->client, 0x8040, GT911_ENTER_GESTURE_CMD);
+		error = goodix_i2c_write_u8_retry(ts->client, 0x8040, GT911_ENTER_GESTURE_CMD);
 		if (error)
-			goto out_reenable_irq;
+			goto out_gesture_fail;
 
 		msleep(50);
 
-		/* 多清几次：坐标状态 + 手势寄存器 */
+		/* 清状态：坐标/手势寄存器 */
 		for (i = 0; i < 3; i++) {
-			goodix_i2c_read(ts->client, GOODIX_READ_COOR_ADDR, &dummy, 1);
-			goodix_i2c_write_u8(ts->client, GOODIX_READ_COOR_ADDR, 0x00);
+			if (!goodix_i2c_read_retry(ts->client, GOODIX_READ_COOR_ADDR, &dummy, 1))
+				goodix_i2c_write_u8_retry(ts->client, GOODIX_READ_COOR_ADDR, 0x00);
 
-			goodix_i2c_read(ts->client, GT911_GESTURE_REG, &dummy, 1);
-			goodix_i2c_write_u8(ts->client, GT911_GESTURE_REG, 0x00);
+			if (!goodix_i2c_read_retry(ts->client, GT911_GESTURE_REG, &dummy, 1))
+				goodix_i2c_write_u8_retry(ts->client, GT911_GESTURE_REG, 0x00);
 
 			usleep_range(2000, 4000);
 		}
 
 		/*
-		 * 关键：清 IRQ pending（EXTI 可能锁存上升沿）
-		 * 并等待 INT 回到 idle=LOW，避免 enable_irq_wake 时立即命中上升沿
+		 * EDGE_FALLING：idle=HIGH
+		 * arm wake 前先清 pending，并等待线回到高电平（避免立即捕获下降沿）
 		 */
 		goodix_clear_irq_pending(client->irq);
-		(void)goodix_wait_int_idle_low(ts, client->irq, 200);
+		(void)goodix_wait_int_idle_high(ts, client->irq, 200);
 		goodix_clear_irq_pending(client->irq);
 
-		/* 只 arm wake，不恢复普通 IRQ */
+		/* 只使能 wake，不开普通 IRQ */
 		error = enable_irq_wake(client->irq);
 		if (error) {
 			dev_err(dev, "enable_irq_wake failed: %d\n", error);
-			goto out_reenable_irq;
+			goto out_gesture_fail;
 		}
 
-		dev_info(dev, "Goodix entered gesture mode + wake armed (EDGE_RISING)\n");
+		pm_runtime_put_noidle(dev);
+		dev_info(dev, "Goodix gesture wake armed (EDGE_FALLING)\n");
 		return 0;
 
-out_reenable_irq:
+out_gesture_fail:
+		/*
+		 * 不要返回错误阻止系统 suspend：失败则退化为普通挂起
+		 */
+		dev_warn(dev, "PM: gesture arm failed (%d), fallback normal suspend\n", error);
 		enable_irq(client->irq);
-		return error;
+		pm_runtime_put_noidle(dev);
+		goto non_wakeup_path;
 	}
 
-	/* ---- Non-wakeup path：保持原逻辑---- */
+non_wakeup_path:
+	/* ---- Non-wakeup path（维持你原来的省电逻辑/最小改动）---- */
 	if (ts->irq_pin_access_method == IRQ_PIN_ACCESS_NONE) {
 		disable_irq(client->irq);
 		return 0;
@@ -1594,31 +1626,16 @@ static int goodix_resume(struct device *dev)
 	u8 config_ver;
 	int error;
 
-	/* ---- Wakeup path resume ---- */
 	if (device_may_wakeup(dev)) {
-		/* 先关 wake，再清 pending，最后开普通 IRQ */
 		disable_irq_wake(client->irq);
 		goodix_clear_irq_pending(client->irq);
 		enable_irq(client->irq);
-
-		/*
-		 * 保险：gesture 模式下可能遗留 0x814B/坐标状态，清一次
-		 * （不强制，若 I2C 域在 resume 早期不可用可删掉）
-		 */
-		{
-			u8 dummy;
-			goodix_i2c_read(ts->client, GT911_GESTURE_REG, &dummy, 1);
-			goodix_i2c_write_u8(ts->client, GT911_GESTURE_REG, 0x00);
-
-			goodix_i2c_read(ts->client, GOODIX_READ_COOR_ADDR, &dummy, 1);
-			goodix_i2c_write_u8(ts->client, GOODIX_READ_COOR_ADDR, 0x00);
-		}
 	}
 
 	if (ts->irq_pin_access_method == IRQ_PIN_ACCESS_NONE)
 		return 0;
 
-	/* 恢复配置（按原逻辑） */
+	/* 恢复配置（按你原逻辑） */
 	error = goodix_i2c_read(ts->client, ts->chip->config_addr, &config_ver, 1);
 	if (error != 0 || config_ver != ts->config[0]) {
 		goodix_reset(ts);
