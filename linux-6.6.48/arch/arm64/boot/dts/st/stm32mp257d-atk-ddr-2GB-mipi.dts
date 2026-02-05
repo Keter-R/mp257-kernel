@@ -68,61 +68,55 @@
 	};
 
 	/* 2. 定义或引用热区 (Thermal Zone) */
-	thermal-zones {
-		/*
-		 * 如果系统中已有该节点，请使用 &soc_thermal 引用并追加内容
-		 */
-		&soc_thermal {
-			polling-delay-passive = <1000>; /* 被动散热轮询间隔 (ms) */
-			polling-delay = <1000>;         /* 普通轮询间隔 (ms) */
+	&{/thermal-zones/soc-thermal} {
+		polling-delay-passive = <1000>; /* 被动散热轮询间隔 (ms) */
+		polling-delay = <1000>;         /* 普通轮询间隔 (ms) */
 
-
-
-			trips {
-				/* 触发点 1: 50°C，风扇开始低速转动 */
-				fan_trip0: trip-point-0 {
-					temperature = <50000>;  /* 50000 mC = 50°C */
-					hysteresis = <2000>;    /* 迟滞 2°C */
-					type = "active";
-				};
-				/* 触发点 2: 60°C，风扇中速 */
-				fan_trip1: trip-point-1 {
-					temperature = <60000>;
-					hysteresis = <2000>;
-					type = "active";
-				};
-				/* 触发点 3: 75°C，风扇全速 */
-				fan_trip2: trip-point-2 {
-					temperature = <75000>;
-					hysteresis = <2000>;
-					type = "active";
-				};
-				/* 紧急关机点: 95°C */
-				cpu_crit: cpu-crit {
-					temperature = <95000>;
-					hysteresis = <2000>;
-					type = "critical";
-				};
+		trips {
+			/* 触发点 1: 50°C，风扇开始低速转动 */
+			fan_trip0: trip-point-0 {
+				temperature = <50000>;  /* 50000 mC = 50°C */
+				hysteresis = <2000>;    /* 迟滞 2°C */
+				type = "active";
 			};
-			cooling-maps {
-				/* 映射 1: 50°C - 60°C 对应 cooling-levels 索引 1 (64/255) */
-				map0 {
-					trip = <&fan_trip0>;
-					cooling-device = <&fan0 1 1>;
-				};
-				/* 映射 2: 60°C - 75°C 对应 cooling-levels 索引 2-3 (128-192/255) */
-				map1 {
-					trip = <&fan_trip1>;
-					cooling-device = <&fan0 2 3>;
-				};
-				/* 映射 3: >75°C 对应 cooling-levels 索引 4 (255/255 全速) */
-				map2 {
-					trip = <&fan_trip2>;
-					cooling-device = <&fan0 4 4>;
-				};
+			/* 触发点 2: 60°C，风扇中速 */
+			fan_trip1: trip-point-1 {
+				temperature = <60000>;
+				hysteresis = <2000>;
+				type = "active";
+			};
+			/* 触发点 3: 75°C，风扇全速 */
+			fan_trip2: trip-point-2 {
+				temperature = <75000>;
+				hysteresis = <2000>;
+				type = "active";
+			};
+			/* 紧急关机点: 95°C */
+			cpu_crit: cpu-crit {
+				temperature = <95000>;
+				hysteresis = <2000>;
+				type = "critical";
+			};
+		};
+		cooling-maps {
+			/* 映射 1: 50°C - 60°C 对应 cooling-levels 索引 1 (64/255) */
+			map0 {
+				trip = <&fan_trip0>;
+				cooling-device = <&fan0 1 1>;
+			};
+			/* 映射 2: 60°C - 75°C 对应 cooling-levels 索引 2-3 (128-192/255) */
+			map1 {
+				trip = <&fan_trip1>;
+				cooling-device = <&fan0 2 3>;
+			};
+			/* 映射 3: >75°C 对应 cooling-levels 索引 4 (255/255 全速) */
+			map2 {
+				trip = <&fan_trip2>;
+				cooling-device = <&fan0 4 4>;
 			};
 		};
 	};
+
 
 };
 
