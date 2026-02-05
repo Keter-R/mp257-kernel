@@ -11,7 +11,7 @@
 	tp_wakeup_pins: tp-wakeup-0 {
 		pins {
 			pinmux = <STM32_PINMUX('B', 2, GPIO)>;
-			bias-disable;
+			bias-pull-down;
 			input-enable;
 		};
 	};
