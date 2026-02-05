@@ -72,11 +72,11 @@
 		/*
 		 * 如果系统中已有该节点，请使用 &soc_thermal 引用并追加内容
 		 */
-		soc-thermal {
+		&soc_thermal {
 			polling-delay-passive = <1000>; /* 被动散热轮询间隔 (ms) */
 			polling-delay = <1000>;         /* 普通轮询间隔 (ms) */
 
-			thermal-sensors = <&cpu_temp 0>;
+
 
 			trips {
 				/* 触发点 1: 50°C，风扇开始低速转动 */
