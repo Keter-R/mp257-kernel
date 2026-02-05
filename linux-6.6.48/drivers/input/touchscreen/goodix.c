@@ -1473,19 +1473,21 @@ static int goodix_suspend(struct device *dev)
 	 * ---------------------------------------------------------
 	 */
 	if (device_may_wakeup(dev)) {
-		/* 1. 禁用中断，防止 ISR 干扰配置过程 */
+		/*
+		 * 1. 禁用软件中断处理
+		 * 这一点至关重要：我们不希望驱动程序的 ISR (goodix_ts_irq_handler)
+		 * 在休眠过程中运行，因为 I2C 总线即将关闭。
+		 */
 		disable_irq(client->irq);
 
-		/*
-		 * 2. 配置手势模式
-		 * 注意：0x8046 的值取决于您需要的手势（0x08 通常是右滑或双击，视固件而定）
-		 */
+		/* 2. 配置手势模式参数 (0x08 = Right Slide / Double Tap, 视固件而定) */
 		error = goodix_i2c_write_u8(ts->client, GOODIX_GESTURE_CONFIG, 0x08);
 		if (error) {
 			dev_err(dev, "Failed to write gesture config: %d\n", error);
 			goto out_err;
 		}
 
+		/* 3. 发送命令进入手势模式 */
 		error = goodix_i2c_write_u8(ts->client, GOODIX_REG_COMMAND, GOODIX_CMD_GESTURE);
 		if (error) {
 			dev_err(dev, "Failed to enter gesture mode: %d\n", error);
@@ -1493,64 +1495,59 @@ static int goodix_suspend(struct device *dev)
 		}
 
 		/*
-		 * 【关键修改 1】：大幅延长等待时间
-		 * GT911 切换到手势模式时，内部会复位并可能产生一个“Ready”脉冲。
-		 * 必须等待这个过程完全结束（经验值 > 100ms）。
+		 * 4. 等待芯片状态稳定
+		 * GT911 切换模式时可能会产生复位脉冲或虚假中断，必须等待。
 		 */
-		msleep(200);
+		msleep(300);
 
 		/*
-		 * 【关键修改 2】：暴力清除状态
-		 * 循环多次读取并清除状态寄存器，确保 INT 引脚被释放（拉高）。
+		 * 5. 暴力清除状态
+		 * 在进入手势模式后，必须确保 INT 引脚被拉低（清除任何挂起的标志）。
 		 */
 		for (i = 0; i < 5; i++) {
-			/* 读取状态（可选，用于调试） */
+			/* 读取状态（消耗掉数据） */
 			goodix_i2c_read(ts->client, GOODIX_READ_COOR_ADDR, &dummy, 1);
 
-			/* 强制写 0 清除中断标志 */
+			/* 写入 0 清除中断标志，这通常会释放 INT 引脚使其回到空闲状态 */
 			goodix_i2c_write_u8(ts->client, GOODIX_READ_COOR_ADDR, 0);
-
-			/*
-			 * 某些固件可能在 0x814F 也有标志，顺手清一下更保险
-			 * 如果您的芯片不支持，可以注释掉下面这行
-			 */
-			// goodix_i2c_write_u8(ts->client, 0x814F, 0);
 
 			usleep_range(5000, 6000);
 		}
 
 		/*
-		 * 【关键修改 3】：GPIO 电平检查（如果硬件支持）
-		 * 如果此时 INT 引脚还是低电平，enable_irq_wake 会导致立即唤醒。
-		 * 这里尝试通过 gpiod 接口读取物理电平。
+		 * 6. GPIO 电平检查
+		 * 您的 DTS 配置为 IRQ_TYPE_LEVEL_HIGH，所以休眠前引脚必须是 LOW (0)。
+		 * 如果是 HIGH (1)，系统休眠后会立即唤醒。
 		 */
 		if (ts->gpiod_int) {
 			int val = gpiod_get_value_cansleep(ts->gpiod_int);
-			/* 假设是低电平触发中断，那么 0 (Low) 意味着危险 */
-			if (val == 0) {
-				dev_warn(dev, "Warning: INT pin is still LOW before suspend! Trying to clear again...\n");
+			if (val == 1) {
+				dev_warn(dev, "Warning: INT pin is HIGH! Wakeup might trigger immediately. Trying to clear again...\n");
 				goodix_i2c_write_u8(ts->client, GOODIX_READ_COOR_ADDR, 0);
 				msleep(20);
+				/* 再次检查，如果还是高电平，可能无法正常休眠，但我们尽力了 */
+			} else {
+				dev_info(dev, "INT pin is LOW (safe for suspend).\n");
 			}
 		}
 
-		/* 恢复中断处理 */
-		enable_irq(client->irq);
-
 		/*
-		 * 此时 INT 应该稳定为高电平。
-		 * 只有 INT 为高时，enable_irq_wake 才是安全的。
+		 * 7. 启用硬件唤醒
+		 * 注意：这里不要调用 enable_irq()！
+		 * enable_irq_wake() 会告诉中断控制器在休眠时监听该引脚。
+		 * 保持 disable_irq() 状态可以防止 "Transfer while suspended" 崩溃。
 		 */
 		error = enable_irq_wake(client->irq);
 		if (error) {
 			dev_err(dev, "enable_irq_wake failed: %d\n", error);
-			return error;
+			goto out_err;
 		}
 
-		dev_info(dev, "Goodix entered gesture mode, wakeup armed. (INT pin settled)\n");
+		dev_info(dev, "Goodix entered gesture mode, wakeup armed.\n");
 		return 0;
 
 out_err:
+		/* 如果失败，恢复中断以便系统继续运行 */
 		enable_irq(client->irq);
 		return error;
 	}
@@ -1566,10 +1563,7 @@ out_err:
 	}
 
 	goodix_free_irq(ts);
-
-	/* 输出低电平，彻底关闭 */
 	goodix_irq_direction_output(ts, 0);
-
 	usleep_range(5000, 6000);
 	goodix_i2c_write_u8(ts->client, GOODIX_REG_COMMAND, GOODIX_CMD_SCREEN_OFF);
 	msleep(58);
@@ -1585,43 +1579,43 @@ static int goodix_resume(struct device *dev)
 	int error;
 
 	if (device_may_wakeup(dev)) {
-		/* 禁用唤醒 */
+		/* 1. 禁用唤醒源 */
 		disable_irq_wake(client->irq);
 
 		/*
-		 * 退出手势模式：
-		 * 即使之前没有 free_irq，为了保证芯片状态复位，
-		 * 建议走统一的 Reset 流程。
-		 * 先释放中断，以便操作 GPIO 进行复位。
+		 * 2. 退出手势模式的逻辑
+		 * 此时 INT 引脚可能因为双击操作被 GT911 拉高了。
+		 * 我们需要复位芯片或拉低 INT 来退出该模式。
+		 * 先释放中断资源，以便我们可以操作 GPIO。
 		 */
 		goodix_free_irq(ts);
 	}
 
+	/* 如果没有 GPIO 控制权，直接恢复中断并返回（通常不走这里） */
 	if (ts->irq_pin_access_method == IRQ_PIN_ACCESS_NONE) {
 		enable_irq(client->irq);
 		return 0;
 	}
 
 	/*
-	 * 恢复流程：
-	 * 1. 拉高 INT (退出休眠/复位准备)
-	 * 2. 同步/复位芯片
-	 * 3. 重新申请中断
+	 * 3. 唤醒/复位芯片
+	 * 将 INT 拉高，通知 GT911 退出休眠/手势模式
 	 */
 	error = goodix_irq_direction_output(ts, 1);
 	if (error) {
 		dev_err(dev, "Resume: Failed to set INT output: %d\n", error);
-		/* 尝试挽救 */
+		/* 尝试挽救：重新申请中断 */
 		goodix_request_irq(ts);
+		/* 此时需要 enable_irq，因为 request_irq 默认是 enable 的，但为了对称性检查一下 */
 		return error;
 	}
 
 	usleep_range(2000, 5000);
 
-	/* 执行复位或同步操作 */
+	/* 4. 执行同步序列 (设置 I2C 地址等) */
 	goodix_int_sync(ts);
 
-	/* 检查配置是否丢失，必要时重发配置 */
+	/* 5. 检查配置是否丢失 (GT911 掉电或复位后可能需要重载配置) */
 	error = goodix_i2c_read(ts->client, ts->chip->config_addr, &config_ver, 1);
 	if (error != 0 || config_ver != ts->config[0]) {
 		dev_info(dev, "Config mismatch after resume, resetting chip...\n");
@@ -1629,7 +1623,11 @@ static int goodix_resume(struct device *dev)
 		goodix_send_cfg(ts, ts->config, ts->chip->config_len);
 	}
 
-	/* 重新申请中断 */
+	/*
+	 * 6. 重新申请中断
+	 * 这会重新注册 ISR 并默认启用中断 (enable_irq)。
+	 * 此时 I2C 控制器已恢复，ISR 运行是安全的。
+	 */
 	error = goodix_request_irq(ts);
 	if (error)
 		dev_err(dev, "Resume: goodix_request_irq failed: %d\n", error);
