@@ -24,22 +24,22 @@
 		};
 	};
 
-	/* reset 引脚：保持为 GPIO 输出（不要在 sleep 把它变成浮空输入） */
-	tp_rst_pins: tp-rst-0 {
-		pins {
-			pinmux = <STM32_PINMUX('B', 1, GPIO)>;
-			output-high;
-			bias-disable;
-		};
-	};
-
-	tp_rst_sleep_pins: tp-rst-sleep-0 {
-		pins {
-			pinmux = <STM32_PINMUX('B', 1, GPIO)>;
-			output-high;
-			bias-disable;
-		};
-	};
+//	/* reset 引脚：保持为 GPIO 输出（不要在 sleep 把它变成浮空输入） */
+//	tp_rst_pins: tp-rst-0 {
+//		pins {
+//			pinmux = <STM32_PINMUX('B', 1, GPIO)>;
+//			output-high;
+//			bias-disable;
+//		};
+//	};
+//
+//	tp_rst_sleep_pins: tp-rst-sleep-0 {
+//		pins {
+//			pinmux = <STM32_PINMUX('B', 1, GPIO)>;
+//			output-high;
+//			bias-disable;
+//		};
+//	};
 
 
 
