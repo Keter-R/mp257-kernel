@@ -681,9 +681,18 @@
 		};
 	};
 
+//	pwm17_sleep_pins_a: pwm17-sleep-0 {
+//		pins {
+//			pinmux = <STM32_PINMUX('B', 10, ANALOG)>; /* TIM17_CH1N */
+//		};
+//	};
 	pwm17_sleep_pins_a: pwm17-sleep-0 {
 		pins {
-			pinmux = <STM32_PINMUX('B', 10, ANALOG)>; /* TIM17_CH1N */
+			pinmux = <STM32_PINMUX('B', 10, GPIO)>; 
+			output-high;        /* 关键：输出高电平以停止反相逻辑的风扇 */
+			bias-pull-up;       /* 开启内部上拉电阻辅助维持高电平 */
+			drive-push-pull;
+			slew-rate = <0>;
 		};
 	};
 
