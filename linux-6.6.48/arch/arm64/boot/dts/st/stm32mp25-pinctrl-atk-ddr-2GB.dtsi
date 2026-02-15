@@ -688,9 +688,12 @@
 //	};
 	pwm17_sleep_pins_a: pwm17-sleep-0 {
 		pins {
+            /* 将引脚复用改为 GPIO，而不是 ANALOG */
 			pinmux = <STM32_PINMUX('B', 10, GPIO)>; 
-			output-high;        /* 关键：输出高电平以停止反相逻辑的风扇 */
-			bias-pull-up;       /* 开启内部上拉电阻辅助维持高电平 */
+            /* 强制输出低电平 */
+			output-low;
+            /* 双重保险：开启下拉电阻 */
+			bias-pull-down;
 			drive-push-pull;
 			slew-rate = <0>;
 		};
