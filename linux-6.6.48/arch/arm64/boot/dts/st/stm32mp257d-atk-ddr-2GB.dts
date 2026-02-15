@@ -127,7 +127,7 @@
 			regulator-name = "vdda_1v8";
 			regulator-min-microvolt = <1800000>;
 			regulator-max-microvolt = <1800000>;
-			regulator-always-on;
+			
 			regulator-boot-on;
 	};
 
@@ -136,7 +136,7 @@
 			regulator-name = "vddref_1v8";
 			regulator-min-microvolt = <1800000>;
 			regulator-max-microvolt = <1800000>;
-			regulator-always-on;
+			
 			regulator-boot-on;
 	};
 
@@ -145,7 +145,7 @@
 		regulator-name = "vdd_3v3";
 		regulator-min-microvolt = <3300000>;
 		regulator-max-microvolt = <3300000>;
-		regulator-always-on;
+		
 		regulator-boot-on;
 	};
 
@@ -154,7 +154,7 @@
 		regulator-name = "vdd_5v";
 		regulator-min-microvolt = <5000000>;
 		regulator-max-microvolt = <5000000>;
-		regulator-always-on;
+		
 		regulator-boot-on;
 	};
 
@@ -163,7 +163,7 @@
 		regulator-name = "imx335-avdd";
 		regulator-min-microvolt = <2900000>;
 		regulator-max-microvolt = <2900000>;
-		regulator-always-on;
+		
 	};
 
 	imx335_1v8: imx335-1v8 {
@@ -171,7 +171,7 @@
 		regulator-name = "imx335-ovdd";
 		regulator-min-microvolt = <1800000>;
 		regulator-max-microvolt = <1800000>;
-		regulator-always-on;
+		
 	};
 
 	imx335_1v2: imx335-1v2 {
@@ -179,7 +179,7 @@
 		regulator-name = "imx335-dvdd";
 		regulator-min-microvolt = <1200000>;
 		regulator-max-microvolt = <1200000>;
-		regulator-always-on;
+		
 	};
 };
 
