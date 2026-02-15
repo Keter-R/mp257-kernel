@@ -675,8 +675,8 @@
     pwm17_pins_a: pwm17-0 {
         pins {
             pinmux = <STM32_PINMUX('B', 10, AF7)>; /* TIM17_CH1N */
-            bias-pull-up; /* 关键：即使在 AF 模式，未输出时也保持下拉 */
-            drive-push-pull;
+            drive-open-drain;
+			bias-disable;
             slew-rate = <0>;
         };
     };
