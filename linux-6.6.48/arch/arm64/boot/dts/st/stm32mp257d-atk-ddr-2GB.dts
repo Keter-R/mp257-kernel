@@ -147,6 +147,10 @@
 		regulator-max-microvolt = <3300000>;
 		
 		regulator-boot-on;
+	    // 定义在休眠(mem)状态下的行为
+	    regulator-state-mem {
+	        regulator-off-in-suspend;  // 进入 mem 模式时关闭 5V
+	    };
 	};
 
 	vdd_5v: regulator-vdd-5v {
@@ -156,6 +160,10 @@
 		regulator-max-microvolt = <5000000>;
 		
 		regulator-boot-on;
+	    // 定义在休眠(mem)状态下的行为
+	    regulator-state-mem {
+	        regulator-off-in-suspend;  // 进入 mem 模式时关闭 5V
+	    };
 	};
 
 	imx335_2v9: imx335-2v9 {
