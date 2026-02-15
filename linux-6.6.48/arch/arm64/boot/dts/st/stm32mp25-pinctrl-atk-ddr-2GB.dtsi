@@ -672,32 +672,22 @@
 		};
 	};
 
-	pwm17_pins_a: pwm17-0 {
-		pins {
-			pinmux = <STM32_PINMUX('B', 10, AF7)>; /* TIM17_CH1N */
-			bias-pull-down;
-			drive-push-pull;
-			slew-rate = <0>;
-		};
-	};
+    pwm17_pins_a: pwm17-0 {
+        pins {
+            pinmux = <STM32_PINMUX('B', 10, AF7)>; /* TIM17_CH1N */
+            bias-pull-down; /* 关键：即使在 AF 模式，未输出时也保持下拉 */
+            drive-push-pull;
+            slew-rate = <0>;
+        };
+    };
 
-//	pwm17_sleep_pins_a: pwm17-sleep-0 {
-//		pins {
-//			pinmux = <STM32_PINMUX('B', 10, ANALOG)>; /* TIM17_CH1N */
-//		};
-//	};
-	pwm17_sleep_pins_a: pwm17-sleep-0 {
-		pins {
-            /* 将引脚复用改为 GPIO，而不是 ANALOG */
-			pinmux = <STM32_PINMUX('B', 10, GPIO)>; 
-            /* 强制输出低电平 */
-			output-low;
-            /* 双重保险：开启下拉电阻 */
-			bias-pull-down;
-			drive-push-pull;
-			slew-rate = <0>;
-		};
-	};
+    pwm17_sleep_pins_a: pwm17-sleep-0 {
+        pins {
+            pinmux = <STM32_PINMUX('B', 10, GPIO)>;
+            output-low;     /* 休眠强制停止 */
+            bias-pull-down;
+        };
+    };
 
 	pwm20_pins_a: pwm20-0 {
 		pins {
